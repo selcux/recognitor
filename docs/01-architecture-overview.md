@@ -47,11 +47,11 @@ Recognitor adopts a **Single Unified Graph with Logical Namespaces** powered by 
 +-------------------------------------------------------------+
 ```
 
-1. **Nodes Table:** Contains all notes across all domains. Each node has a `namespace`, disk `path`, checksum, title, permalink, mtime, and frontmatter.
-2. **Edges Table:** Explicit relational edges (`source_id`, `target_id`, `predicate`, `weight`, `context`). Foreign keys reference `nodes(id)`. Edges connect nodes across namespaces with zero boundary friction.
+1. **Nodes:** Represents notes across domains, identified by unique IDs/paths and scoped by logical namespace.
+2. **Edges:** Typed relational edges connecting nodes across namespaces with optional predicates and weights.
 3. **Query Scoping:**
-   - **Default Scope:** When an agent works inside a specific context, queries filter `namespace = 'coding'`.
-   - **Traversable Scope:** Relational queries can walk edges across namespace boundaries using recursive CTEs or via in-memory graph expansion in Rust, with configurable depth limits or hop-decay weights.
+   - **Default Scope:** When an agent works inside a specific context, queries filter by active namespace.
+   - **Traversable Scope:** Relational queries can traverse edges across namespace boundaries when following connections.
 
 ---
 
@@ -67,69 +67,19 @@ Recognitor uses a **file-first** architecture:
 
 ## 5. Technology Stack Selection
 
-### Database Layer: SQLite + petgraph + sqlite-vec (Embedded in Rust)
-- **Why SQLite (`rusqlite`):**
-  - Universal, zero-maintenance embedded engine with sub-millisecond execution.
-  - Zero external daemons, zero network stack, and native cross-platform support across Windows, macOS, and Linux.
-  - ACID transactional consistency for batch index updates.
-- **Why `petgraph` in Rust:**
-  - Complex graph algorithms (PageRank, personalized walks, shortest paths, centrality) run directly in Rust memory in microseconds over SQLite-backed edge lists.
-  - Replaces external graph engine dependencies with a battle-tested pure Rust data structure library.
-- **Why `sqlite-vec`:**
-  - Modern, fast vector search extension written in C with SIMD acceleration, embedding directly into SQLite.
-  - Keeps vectors, metadata, and graph edges inside the same SQLite file.
+### Database Layer: SQLite + petgraph (Embedded in Rust)
+- **SQLite (`rusqlite`):** Zero-maintenance, in-process embedded storage engine with sub-millisecond execution, zero network overhead, and universal platform support.
+- **`petgraph`:** In-memory graph processing in pure Rust for complex graph traversals and ranking algorithms over edge lists loaded from SQLite.
 
 ### Language & Runtime Layer: Rust
-- **Why Rust:**
-  - Sub-millisecond cold start for CLI commands and MCP daemon operations.
-  - Distribution as a single static binary without Python virtual environments, runtime dependencies, or Docker containers.
-  - High-throughput Markdown parsers (e.g. `pulldown-cmark`) feeding directly into `rusqlite`.
+- Sub-millisecond startup for CLI invocations and MCP operations.
+- Single static binary distribution without runtime or daemon dependencies.
 
 ---
 
-## 6. SQLite Schema Definition
+## 6. Storage Model & Schema Status
 
-```sql
--- Notes table
-CREATE TABLE nodes (
-    id TEXT PRIMARY KEY,
-    namespace TEXT NOT NULL,
-    path TEXT NOT NULL UNIQUE,
-    title TEXT NOT NULL,
-    permalink TEXT NOT NULL,
-    checksum TEXT NOT NULL,
-    mtime INTEGER NOT NULL,
-    raw_frontmatter TEXT
-);
-
-CREATE INDEX idx_nodes_namespace ON nodes(namespace);
-CREATE INDEX idx_nodes_permalink ON nodes(permalink);
-
--- Relational edges table
-CREATE TABLE edges (
-    source_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    target_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    predicate TEXT NOT NULL,
-    weight REAL DEFAULT 1.0,
-    context TEXT,
-    PRIMARY KEY (source_id, target_id, predicate)
-);
-
-CREATE INDEX idx_edges_source ON edges(source_id);
-CREATE INDEX idx_edges_target ON edges(target_id);
-CREATE INDEX idx_edges_predicate ON edges(predicate);
-
--- Full-Text Search index (FTS5)
-CREATE VIRTUAL TABLE nodes_fts USING fts5(
-    title,
-    content,
-    content='nodes',
-    content_rowid='rowid'
-);
-
--- Vector Search index (sqlite-vec)
-CREATE VIRTUAL TABLE vec_nodes USING vec0(
-    id TEXT PRIMARY KEY,
-    embedding float[384] distance_metric=cosine
-);
-```
+The concrete database schema is currently **to be defined** following alignment on:
+1. Markdown edge notation syntax.
+2. Metadata and frontmatter requirements.
+3. Vector indexing integration strategy.
