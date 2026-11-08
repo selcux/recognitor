@@ -4,11 +4,17 @@ This document tracks architectural decisions, resolved choices, and design trade
 
 ---
 
-## 1. Resolved Decision: Database Layer (CozoDB)
+## 1. Resolved Decision: Database Layer (SQLite + petgraph + sqlite-vec)
 
-### Decision: CozoDB over SQLite and SurrealDB
-- **Why SurrealDB was rejected:** SurrealDB does not support cross-namespace graph edges (re-creating Basic Memory's project silos), lacks built-in graph algorithms like PageRank, and introduces massive binary and compile-time bloat from its distributed server architecture.
-- **Why CozoDB won over bare SQLite:** While SQLite is battle-tested, implementing recursive graph traversals, PageRank, and vector search in SQLite requires assembling and maintaining separate extensions (`sqlite-vec`, custom recursive CTEs, and external graph libraries like `petgraph`). CozoDB integrates relational tables, Datalog recursive rules, built-in PageRank, and HNSW vector search in a single pure Rust embedded crate.
+### Decision: SQLite stack over CozoDB, FalkorDB, TerminusDB, and SurrealDB
+- **Why CozoDB was superseded:** CozoDB's upstream repository has been inactive for over two years with zero commits, introducing severe maintenance, dependency, and bitrot risks for a core system component.
+- **Why FalkorDB was rejected:** FalkorDB requires a Redis / Valkey daemon process (client-server architecture), uses a restrictive SSPLv1 license, and lacks native embedded Windows support.
+- **Why TerminusDB was rejected:** TerminusDB is a server-oriented database running over HTTP, depends on a heavy SWI-Prolog runtime environment, and its Git-like versioning primitives duplicate version control already handled by plain Markdown files in Git.
+- **Why SurrealDB was rejected:** SurrealDB does not support cross-namespace graph edges (re-creating project silos), lacks built-in graph algorithms like PageRank, and introduces massive binary and compile-time bloat from its distributed server architecture.
+- **Why SQLite + petgraph + sqlite-vec won:**
+  1. **Zero maintenance risk:** SQLite is permanent infrastructure with decades of reliability and universal cross-platform support.
+  2. **In-process embedded execution:** Runs directly inside the Rust process with microsecond query latency, zero background daemons, and flawless native Windows, macOS, and Linux operation.
+  3. **Separation of concerns:** SQLite handles relational storage, indexing, and transactional durability; `sqlite-vec` handles vector embeddings; pure Rust `petgraph` algorithms handle graph math (PageRank, personalized walks, hub dampening) in memory with zero C++/Datalog friction.
 
 ---
 
@@ -53,7 +59,7 @@ This module implements:: [[Security Spec]] and depends_on:: [[User DB Schema]].
 
 ## 3. Invalidation & Sync Architecture (Open)
 
-How does the CozoDB index stay in sync with local Markdown files?
+How does the SQLite index stay in sync with local Markdown files?
 
 1. **Filesystem Watcher (Notify crate in Rust):**
    - Continuously monitors the directory tree in the background while the MCP server runs.
@@ -81,6 +87,6 @@ When an agent is queried within a specific domain, how should cross-namespace ed
 
 ## 5. Graph Fan-Out & Traversal Strategy (Resolved in Principle)
 
-Instead of hard depth truncation (e.g. blind BFS cutoff at depth 2), Recognitor will leverage CozoDB's built-in graph algorithms and Datalog rules:
+Instead of hard depth truncation (e.g. blind BFS cutoff at depth 2), Recognitor will leverage recursive SQL CTEs combined with in-memory graph algorithms via `petgraph` in Rust:
 - **Personalized PageRank / Topic Walk:** Biases the walk toward seed nodes matching the prompt, pruning off-topic branches mathematically regardless of depth.
 - **Hub Dampening:** High-degree hub nodes have their edge weights dampened by inverse degree to prevent generic index pages from overwhelming specific thematic threads.

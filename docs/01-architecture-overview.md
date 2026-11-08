@@ -12,13 +12,13 @@ While tools like Basic Memory demonstrated the value of combining local Markdown
 
 | Capability | Basic Memory | Recognitor |
 | :--- | :--- | :--- |
-| **Storage Architecture** | Physically separate SQLite database per project. | Single unified CozoDB engine with domain namespaces. |
-| **Cross-Domain Traversal** | Broken at the database level. `[[project::note]]` is an unindexed reference. | Native. Relational edges connect nodes across namespaces and are traversable in single Datalog queries. |
+| **Storage Architecture** | Physically separate SQLite database per project. | Single unified SQLite engine with domain namespaces. |
+| **Cross-Domain Traversal** | Broken at the database level. `[[project::note]]` is an unindexed reference. | Native. Relational edges connect nodes across namespaces in a single database. |
 | **Domain Isolation** | Hard silo on disk. | Logical namespaces (`work`, `personal`, `research`) filtered by default at query time. |
 | **Graph Edge Semantics** | Section-based `## Relations` with list items (`- type [[target]]`). | First-class edge relations with typed predicates, weights, and context. |
-| **Graph Algorithms** | None. Manual BFS in Python application code. | Built-in PageRank, Shortest Paths, and recursive Datalog traversals. |
-| **Vector Search** | Basic/separate. | Built-in HNSW vector index integrated with graph queries. |
-| **Runtime & Latency** | Python MCP server (subject to interpreter cold start). | Pure Rust embedded engine (`cozo` crate) with sub-millisecond startup. |
+| **Graph Algorithms** | None. Manual BFS in Python application code. | Recursive SQL CTEs for hierarchies, and in-memory `petgraph` algorithms (PageRank, Shortest Paths) in Rust. |
+| **Vector Search** | Basic/separate. | Built-in vector search via `sqlite-vec` or Rust-native HNSW indices. |
+| **Runtime & Latency** | Python MCP server (subject to interpreter cold start). | Pure Rust embedded engine (`rusqlite`) with sub-millisecond startup. |
 
 ---
 
@@ -28,11 +28,11 @@ While tools like Basic Memory demonstrated the value of combining local Markdown
 In Basic Memory, isolating domains requires creating distinct projects. Because each project is a separate SQLite file on disk, joins, referential integrity, and graph queries cannot cross project boundaries.
 
 ### The Recognitor Model
-Recognitor adopts a **Single Unified Graph with Logical Namespaces** powered by CozoDB:
+Recognitor adopts a **Single Unified Graph with Logical Namespaces** powered by an embedded SQLite engine paired with Rust graph algorithms:
 
 ```
 +-------------------------------------------------------------+
-|                CozoDB Relational-Graph-Vector               |
+|                SQLite Relational-Graph-Vector               |
 |                                                             |
 |  [Namespace: coding]               [Namespace: personal]    |
 |   +---------------+                 +------------------+    |
@@ -47,11 +47,11 @@ Recognitor adopts a **Single Unified Graph with Logical Namespaces** powered by 
 +-------------------------------------------------------------+
 ```
 
-1. **Nodes Relation:** Contains all notes across all domains. Each node has a `namespace`, disk `path`, checksum, frontmatter, and dense vector embedding.
-2. **Edges Relation:** Explicit relational edges (`source_id`, `target_id`, `predicate`, `weight`, `context`). Edges connect nodes across namespaces with zero boundary friction.
+1. **Nodes Table:** Contains all notes across all domains. Each node has a `namespace`, disk `path`, checksum, title, permalink, mtime, and frontmatter.
+2. **Edges Table:** Explicit relational edges (`source_id`, `target_id`, `predicate`, `weight`, `context`). Foreign keys reference `nodes(id)`. Edges connect nodes across namespaces with zero boundary friction.
 3. **Query Scoping:**
-   - **Default Scope:** When an agent works inside a specific context, queries filter `namespace == 'coding'`.
-   - **Traversable Scope:** When traversing relations, Datalog rules walk edges outward regardless of namespace boundaries, with optional hop-decay weights.
+   - **Default Scope:** When an agent works inside a specific context, queries filter `namespace = 'coding'`.
+   - **Traversable Scope:** Relational queries can walk edges across namespace boundaries using recursive CTEs or via in-memory graph expansion in Rust, with configurable depth limits or hop-decay weights.
 
 ---
 
@@ -60,66 +60,76 @@ Recognitor adopts a **Single Unified Graph with Logical Namespaces** powered by 
 Recognitor uses a **file-first** architecture:
 
 1. **Disk is Canonical:** Plain Markdown files on the local filesystem are the ultimate source of truth.
-2. **Database is a Fast Index:** CozoDB is a disposable, rebuildable projection of the Markdown files. If the database file is deleted, `recognitor rebuild` reconstructs the entire graph, full-text index, and vector embeddings directly from the files.
+2. **Database is a Fast Index:** SQLite is a disposable, rebuildable projection of the Markdown files. If the database file is deleted, `recognitor rebuild` reconstructs the entire graph, full-text index, and vector embeddings directly from the files.
 3. **Bidirectional Safety:** Edits made by human hands in editors like Obsidian are detected via file modification timestamps and hashes, triggering incremental re-indexing.
 
 ---
 
 ## 5. Technology Stack Selection
 
-### Database Layer: CozoDB (Rust Native)
-- **Why CozoDB:**
-  - Advertised as the "Hippocampus for AI", CozoDB unifies relational storage, graph algorithms, and vector search in a single embedded engine.
-  - Built-in **PageRank** and **Shortest Path** algorithms solve the fan-out problem deterministically.
-  - Native **HNSW** vector index allows vector similarity search and graph edge expansion inside the same query.
-  - Written in pure Rust, running in-process with zero network latency.
-  - Storage durability backed by RocksDB or SQLite under the hood.
+### Database Layer: SQLite + petgraph + sqlite-vec (Embedded in Rust)
+- **Why SQLite (`rusqlite`):**
+  - Universal, zero-maintenance embedded engine with sub-millisecond execution.
+  - Zero external daemons, zero network stack, and native cross-platform support across Windows, macOS, and Linux.
+  - ACID transactional consistency for batch index updates.
+- **Why `petgraph` in Rust:**
+  - Complex graph algorithms (PageRank, personalized walks, shortest paths, centrality) run directly in Rust memory in microseconds over SQLite-backed edge lists.
+  - Replaces external graph engine dependencies with a battle-tested pure Rust data structure library.
+- **Why `sqlite-vec`:**
+  - Modern, fast vector search extension written in C with SIMD acceleration, embedding directly into SQLite.
+  - Keeps vectors, metadata, and graph edges inside the same SQLite file.
 
 ### Language & Runtime Layer: Rust
 - **Why Rust:**
   - Sub-millisecond cold start for CLI commands and MCP daemon operations.
-  - Distribution as a single static binary without Python virtual environments or runtime dependencies.
-  - High-throughput Markdown parsers (e.g. `pulldown-cmark`) feeding directly into the embedded `cozo` crate.
+  - Distribution as a single static binary without Python virtual environments, runtime dependencies, or Docker containers.
+  - High-throughput Markdown parsers (e.g. `pulldown-cmark`) feeding directly into `rusqlite`.
 
 ---
 
-## 6. CozoDB Schema Definition (CozoScript)
+## 6. SQLite Schema Definition
 
-```datalog
-% Stored relation for notes / nodes
-:create nodes {
-    id: String =>
-    namespace: String,
-    path: String,
-    title: String,
-    permalink: String,
-    checksum: String,
-    mtime: Int,
-    raw_frontmatter: Json,
-    embedding: <F32; 384>
-}
+```sql
+-- Notes table
+CREATE TABLE nodes (
+    id TEXT PRIMARY KEY,
+    namespace TEXT NOT NULL,
+    path TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    permalink TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    mtime INTEGER NOT NULL,
+    raw_frontmatter TEXT
+);
 
-% Stored relation for typed graph edges
-:create edges {
-    source_id: String,
-    target_id: String,
-    predicate: String =>
-    weight: Float,
-    context: String
-}
+CREATE INDEX idx_nodes_namespace ON nodes(namespace);
+CREATE INDEX idx_nodes_permalink ON nodes(permalink);
 
-% HNSW vector index for semantic retrieval
-::hnsw create nodes:vec_idx {
-    dim: 384,
-    dtype: F32,
-    fields: [embedding],
-    distance: Cosine,
-    m: 32,
-    ef_construction: 64
-}
+-- Relational edges table
+CREATE TABLE edges (
+    source_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    target_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    predicate TEXT NOT NULL,
+    weight REAL DEFAULT 1.0,
+    context TEXT,
+    PRIMARY KEY (source_id, target_id, predicate)
+);
 
-% Full-Text Search index
-::fts create nodes:fts_idx {
-    fields: [title]
-}
+CREATE INDEX idx_edges_source ON edges(source_id);
+CREATE INDEX idx_edges_target ON edges(target_id);
+CREATE INDEX idx_edges_predicate ON edges(predicate);
+
+-- Full-Text Search index (FTS5)
+CREATE VIRTUAL TABLE nodes_fts USING fts5(
+    title,
+    content,
+    content='nodes',
+    content_rowid='rowid'
+);
+
+-- Vector Search index (sqlite-vec)
+CREATE VIRTUAL TABLE vec_nodes USING vec0(
+    id TEXT PRIMARY KEY,
+    embedding float[384] distance_metric=cosine
+);
 ```
