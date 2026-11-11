@@ -76,11 +76,17 @@ How should templates and dynamic substitutions be handled for standardized note 
 
 ---
 
-## 8. Schema Validation Strategy (Open)
+## 8. Schema Validation Strategy: Structural Linting (Resolved)
 
-How should note schema conformity be validated?
-- **Basic Memory Reference:** Analyze Basic Memory's lightweight Picoschema approach (`bm schema validate --strict`), where schemas are defined as Markdown notes (`type: schema`) with simple field types (`string`, `number`, `boolean`, `string[]`).
-- **Validation Timing:** Pre-commit hooks (`.githooks`) vs on-ingestion parsing warnings in SQLite.
+Resolved in favor of lightweight **Structural Linting** rather than a rigid, user-facing schema DSL (such as Basic Memory's Picoschema).
+
+- **Resilient SQLite Fallbacks:** Recognitor's embedded relational engine does not require schema conformity to function. Missing frontmatter defaults to `tier: 'knowledge'` and `type: 'note'`, titles fall back to the H1 heading, and namespaces are inferred from filesystem paths.
+- **Structural Invariants Only:** The engine validates the mechanical invariants necessary for graph construction:
+  1. Frontmatter is valid, syntactically parsable YAML.
+  2. The `## Relations` section strictly conforms to the `- <predicate> [[Target]]` bullet pattern.
+  3. Bracketed observations conform to well-formed `- [category] ...` lines.
+- **Ingestion Tolerance:** Invalid files trigger non-fatal diagnostic warnings during SQLite indexing rather than halting parsing or dropping notes from search.
+- **Strict CLI Lint:** An optional `recognitor lint --strict` command provides a zero-exit-code gate suitable for pre-commit hooks or CI workflows. Dedicated schema definitions (e.g. required custom fields per note type) remain deferred until real multi-agent schema drift demands them.
 
 ---
 
