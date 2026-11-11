@@ -19,6 +19,10 @@ How should notes, metadata, edges, observations, and vectors be mapped into SQLi
 - **Node & Metadata Attributes (Resolved):** Dedicated columns for `id`, `namespace`, `path`, `title`, `type`, `summary`, and `mtime`. Notes without `type` default to Tier 4 (Domain Knowledge PKM). Full specification in [04-information-tiers-and-lifecycle.md](04-information-tiers-and-lifecycle.md).
 - **Observation Granularity (Resolved):** Dedicated `observations` table parsing bracketed bullets (`- [category] ...`) with open string `category TEXT` to enable surgical fact retrieval without context bloat.
 - **Edge Representation (Resolved):** Dedicated `edges` table with `(source_id, target_id, predicate, is_inline)`.
+- **Namespace-to-Schema Mapping (Open):** How logical namespaces map to the physical SQLite schema:
+  - *Option A (Table-per-Namespace):* Separate tables per domain (`coding_notes`, `personal_notes`). Recreates Basic Memory's silo problem inside SQLite; destroys foreign keys and cross-domain graph joins.
+  - *Option B (Single Unified Table with Indexed Column - Recommended):* Single `notes` table with indexed `namespace TEXT` column. Enables effortless cross-domain foreign keys, zero DDL migrations when adding namespaces, and instant B-tree seeks.
+  - *Option C (Hierarchical Contextual Namespaces):* Path-based namespaces (`work/infra`, `personal/health`) supporting hierarchical prefix queries (`WHERE namespace LIKE 'work/%'`).
 - **Vector Indexing (Open):** Whether to use an embedded SQLite extension (`sqlite-vec`) or maintain vector indices in pure Rust.
 - **Full-Text Indexing (Open):** FTS5 table configuration and indexing scope.
 
