@@ -8,7 +8,7 @@ This document defines the physical SQLite database schema for Recognitor. The da
 
 1. **Unified Relational Graph:** Notes, edges, and observations coexist in a single SQLite database across all namespaces, eliminating siloed databases and enabling cross-domain graph traversal.
 2. **Soft Foreign Keys for Ghost Links:** `edges.source_id` strictly references `notes.id`, but `edges.target_id` is a soft reference. References to uncreated notes are preserved as ghost links without violating database constraints.
-3. **Pacing Tiers as First-Class Citizens:** Notes store their information tier (1 to 5) directly, defaulting to Tier 4 (Domain Knowledge PKM) for unclassified notes.
+3. **Pacing Tiers as First-Class Citizens:** Notes store their information tier directly as semantic text strings (`profile`, `behavior`, `rule`, `knowledge`, `archive`), defaulting to `'knowledge'` for unclassified notes. Zero magic numbers or mental translation required.
 4. **Surgical Granularity:** The `observations` table indexes individual bracketed bullets (`- [category] ...`) with an open text category, allowing agents to retrieve atomic facts without pulling whole files into prompt context.
 5. **Disposable Projection:** The entire database can be deleted at any time and reconstructed deterministically via `recognitor rebuild`.
 
@@ -25,7 +25,7 @@ CREATE TABLE notes (
     id TEXT PRIMARY KEY,                       -- Canonical slug: "<namespace>/<slug>" (e.g. "backend/auth-flow")
     namespace TEXT NOT NULL,                   -- Logical domain namespace (e.g. "backend", "cognition", "personal/health")
     type TEXT NOT NULL DEFAULT 'note',         -- Frontmatter type (e.g. "profile", "decision", "spec", "note")
-    tier INTEGER NOT NULL DEFAULT 4,           -- Information pacing tier (1: Profile, 2: Frame, 3: Operational, 4: PKM, 5: Archive)
+    tier TEXT NOT NULL DEFAULT 'knowledge',    -- Information pacing tier: "profile", "behavior", "rule", "knowledge", "archive"
     title TEXT NOT NULL,                       -- Human-readable title from H1 or frontmatter
     path TEXT NOT NULL UNIQUE,                 -- Relative filesystem path from root (e.g. "backend/auth-flow.md")
     summary TEXT,                              -- First paragraph synopsis for token-efficient graph traversal
@@ -128,7 +128,7 @@ Hydrates Tier 1 and Tier 2 context for the `recognitor.get_bootstrap()` tool:
 ```sql
 SELECT id, type, title, content 
 FROM notes 
-WHERE tier IN (1, 2) 
+WHERE tier IN ('profile', 'behavior') 
   AND namespace = 'common'
 ORDER BY tier ASC;
 ```

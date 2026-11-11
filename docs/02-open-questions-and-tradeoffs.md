@@ -17,7 +17,7 @@ Recognitor uses an embedded SQLite engine via Rust (`rusqlite`) paired with in-m
 
 Resolved with a unified SQLite relational schema, soft-key edges, observation tables, and external-content FTS5 search. Full specification defined in [05-database-schema-specification.md](05-database-schema-specification.md).
 
-- **Unified Table & Namespace Mapping (Resolved):** Single `notes` table with indexed `namespace TEXT` and `tier INTEGER` columns. Zero-DDL namespace creation with support for hierarchical paths (`work/backend`).
+- **Unified Table & Namespace Mapping (Resolved):** Single `notes` table with indexed `namespace TEXT` and `tier TEXT` columns (defaulting to `'knowledge'`). Zero-DDL namespace creation with support for hierarchical paths (`work/backend`).
 - **Soft-Key Edges & Ghost Notes (Resolved):** Dedicated `edges` table with `(source_id, target_id, predicate, is_inline)`. `target_id` uses soft references, enabling ghost notes to surface as an unwritten concept backlog without constraint violations.
 - **Observation Granularity (Resolved):** Dedicated `observations` table parsing bracketed bullets (`- [category] ...`) with open string `category TEXT` for surgical fact retrieval.
 - **Full-Text Indexing (Resolved):** SQLite FTS5 external content virtual table (`notes_fts`) kept in sync via database triggers.

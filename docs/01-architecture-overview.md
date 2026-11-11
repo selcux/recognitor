@@ -81,13 +81,13 @@ Recognitor uses a **file-first** architecture:
 
 Recognitor partitions managed knowledge into 5 distinct pacing tiers based on rate of change and loading policy. Full specification in [04-information-tiers-and-lifecycle.md](04-information-tiers-and-lifecycle.md).
 
-1. **Tier 1 (Grounding Profile):** Stable user identity and working preferences injected at session start.
-2. **Tier 2 (Behavioral Frame):** Active communication persona and output style filters.
-3. **Tier 3 (Operational Rules):** Harness, repository, and workflow constraints.
-4. **Tier 4 (Domain Knowledge PKM - Default Tier):** On-demand technical notes, decisions, and concepts. Any note without an explicit frontmatter type automatically defaults to Tier 4.
-5. **Tier 5 (Deep Archive):** Raw session records and verbatim transcripts, excluded from standard searches.
+1. **`profile` (Grounding Profile):** Stable user identity and working preferences injected at session start.
+2. **`behavior` (Behavioral Frame):** Active communication persona and output style filters.
+3. **`rule` (Operational Rules):** Harness, repository, and workflow constraints.
+4. **`knowledge` (Domain Knowledge PKM - Default Tier):** On-demand technical notes, decisions, and concepts. Any note without an explicit frontmatter type automatically defaults to `knowledge`.
+5. **`archive` (Deep Archive):** Raw session records and verbatim transcripts, excluded from standard searches.
 
-The engine provides a one-shot `recognitor.get_bootstrap()` tool to hydrate Tiers 1 and 2 in a single call, eliminating fragile multi-hop procedural file reads at session start.
+The engine provides a one-shot `recognitor.get_bootstrap()` tool to hydrate `profile` and `behavior` tiers in a single call, eliminating fragile multi-hop procedural file reads at session start.
 
 ---
 

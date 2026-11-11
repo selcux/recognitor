@@ -12,15 +12,15 @@ Recognitor formalizes a **5-Tier Pacing Architecture** to uncomplect these conce
 
 ```
 +-------------------------------------------------------------+
-|  Tier 1: Grounding Profile (Identity, ADHD, Focus Windows)  | <-- Bootstrap: loaded once at session start
+|  Tier: profile (Identity, ADHD, Focus Windows)              | <-- Bootstrap: loaded once at session start
 +-------------------------------------------------------------+
-|  Tier 2: Behavioral Frame (Personas, Tone, Output Style)    | <-- Filter: active session switch
+|  Tier: behavior (Personas, Tone, Output Style)              | <-- Filter: active session switch
 +-------------------------------------------------------------+
-|  Tier 3: Operational Rules (Tool Rules, Harness Workflows)  | <-- Environment: bound to repo / execution
+|  Tier: rule (Tool Rules, Harness Workflows)                 | <-- Environment: bound to repo / execution
 +-------------------------------------------------------------+
-|  Tier 4: Domain Knowledge PKM (Specs, Concepts, Decisions)  | <-- On-Demand: cold storage (DEFAULT TIER)
+|  Tier: knowledge (Specs, Concepts, Decisions)               | <-- On-Demand: cold storage (DEFAULT TIER)
 +-------------------------------------------------------------+
-|  Tier 5: Deep Archive (Session Records, Raw Transcripts)    | <-- Frozen: excluded unless requested
+|  Tier: archive (Session Records, Raw Transcripts)           | <-- Frozen: excluded unless requested
 +-------------------------------------------------------------+
 ```
 
@@ -28,13 +28,13 @@ Recognitor formalizes a **5-Tier Pacing Architecture** to uncomplect these conce
 
 ## 2. Information Tier Definitions
 
-| Tier | Name | Description & Examples | Frontmatter `type` | Loading Policy | Token Budget Target |
+| Tier Name | Category | Description & Examples | Frontmatter `type` | Loading Policy | Token Budget Target |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Tier 1** | **Grounding Profile** | Stable facts about the user: identity, cognitive traits, working styles, focus windows. | `profile` | **Bootstrap:** Injected automatically at session start. Persistent throughout session. | < 300 tokens |
-| **Tier 2** | **Behavioral Frame** | Tone and interaction switches: output formatting, writing rules, active persona. | `preference` | **Filter:** Active switch chosen at session start. Swappable mid-conversation. | < 250 tokens |
-| **Tier 3** | **Operational Rules** | Harness-level instructions: tool usage workflows, repository constraints, build protocols. | `instruction`, `workflow` | **Environment:** Bound to repository root (`AGENTS.md`) or tool invocation. | ~500 tokens |
-| **Tier 4** | **Domain Knowledge** | Core PKM corpus: technical specifications, architectural decisions, code designs, thinking concepts. | `decision`, `concept`, `spec`, `note` *(or undeclared)* | **On-Demand:** Cold storage in SQLite. Queried via graph walks or vector search only. | Pay-per-query (compact skeletons) |
-| **Tier 5** | **Deep Archive** | Detailed session logs, raw transcript dumps, verbatim error traces. | `archive`, `session_record` | **Frozen:** Excluded from standard searches. Queried only on explicit request. | Zero until requested |
+| **`profile`** | **Grounding Profile** | Stable facts about the user: identity, cognitive traits, working styles, focus windows. | `profile` | **Bootstrap:** Injected automatically at session start. Persistent throughout session. | < 300 tokens |
+| **`behavior`** | **Behavioral Frame** | Tone and interaction switches: output formatting, writing rules, active persona. | `preference` | **Filter:** Active switch chosen at session start. Swappable mid-conversation. | < 250 tokens |
+| **`rule`** | **Operational Rules** | Harness-level instructions: tool usage workflows, repository constraints, build protocols. | `instruction`, `workflow` | **Environment:** Bound to repository root (`AGENTS.md`) or tool invocation. | ~500 tokens |
+| **`knowledge`** | **Domain Knowledge** | Core PKM corpus: technical specifications, architectural decisions, code designs, thinking concepts. | `decision`, `concept`, `spec`, `note` *(or undeclared)* | **On-Demand:** Cold storage in SQLite. Queried via graph walks or vector search only. | Pay-per-query (compact skeletons) |
+| **`archive`** | **Deep Archive** | Detailed session logs, raw transcript dumps, verbatim error traces. | `archive`, `session_record` | **Frozen:** Excluded from standard searches. Queried only on explicit request. | Zero until requested |
 
 ---
 
@@ -42,11 +42,11 @@ Recognitor formalizes a **5-Tier Pacing Architecture** to uncomplect these conce
 
 To ensure zero friction for casual note-taking and external editor integration (e.g. Obsidian):
 
-> **Rule:** If a note does not declare a `type` in its YAML frontmatter, or if the `type` is unclassified, Recognitor automatically assigns it to **Tier 4 (Domain Knowledge / PKM)**.
+> **Rule:** If a note does not declare a `type` in its YAML frontmatter, or if the `type` is unclassified, Recognitor automatically assigns it to **tier: `knowledge`**.
 
 - Casual Markdown notes without frontmatter are never injected into startup context.
 - They remain indexed, searchable, and traversable via the knowledge graph without accidental prompt pollution.
-- Upgrading a note to Tier 1 or Tier 2 requires an explicit frontmatter declaration (`type: profile` or `type: preference`).
+- Upgrading a note to `profile` or `behavior` requires an explicit frontmatter declaration (`type: profile` or `type: preference`).
 
 ---
 
@@ -111,7 +111,7 @@ During active task execution, knowledge retrieval queries are scoped to prevent 
 ```json
 recognitor.search(
     query="authentication tokens",
-    tiers=[4]
+    tiers=["knowledge"]
 )
 ```
 
