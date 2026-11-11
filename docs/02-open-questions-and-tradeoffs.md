@@ -36,18 +36,16 @@ Resolved in favor of a two-tier model: dedicated `## Relations` section for type
 
 ---
 
-## 4. Invalidation & Sync Architecture (Open)
+## 4. Invalidation & Sync Architecture: On-Demand Sweep with TTL Gate (Resolved)
 
-How does the SQLite index stay in sync with local Markdown files?
+Resolved in favor of **deterministic on-demand reconciliation with a 2-second TTL cooldown gate**, rejecting continuous background daemon watchers (`notify`).
 
-1. **Filesystem Watcher (Notify crate in Rust):**
-   - Continuously monitors the directory tree in the background while the MCP server runs.
-   - Updates changed files incrementally in near real-time.
-2. **On-Demand Stale Check:**
-   - Checks file modification times (`mtime`) and checksums at query time or tool invocation.
-   - Avoids running a continuous background watcher thread.
-3. **Explicit Sync / Rebuild:**
-   - Requires explicit CLI or tool triggers (`recognitor sync` / `recognitor rebuild`).
+- **Deterministic Correctness:** Pull-based reconciliation on query or tool invocation guarantees index consistency across machine sleep/wake cycles, git branch switches, and cloud sync without relying on stateful background threads.
+- **2-Second TTL Cooldown Window:** Rapid multi-step tool calls within the same agent turn (e.g. `get_bootstrap`, `search`, `context`) execute against hot in-memory SQLite without repeating filesystem stat sweeps. If `(now - last_sweep_time) < 2000ms`, the sweep is bypassed entirely.
+- **Stat-Only Sweep:** Checks file modification timestamps (`disk.mtime`) against `notes.mtime` in SQLite using OS-cached metadata (dentry cache). Only files whose timestamps or existence changed are read and re-parsed. Deleted files cascade automatically.
+- **Developer & Agent Ergonomics:**
+  - `recognitor sync`: Explicit CLI command to force an mtime sweep and report dirty files.
+  - `recognitor rebuild`: Nuclear command to drop tables and re-index the entire vault deterministically from canonical Markdown.
 
 ---
 
