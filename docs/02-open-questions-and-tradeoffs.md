@@ -50,16 +50,12 @@ How does the SQLite index stay in sync with local Markdown files?
 
 ---
 
-## 5. Cross-Domain Agent Scoping & Privacy (Open)
+## 5. Cross-Domain Agent Scoping & Privacy (Resolved)
 
-When an agent is queried within a specific domain, how should cross-namespace edges be exposed?
-
-1. **Strictly Permissive Traversal:**
-   - The initial query filters on the active namespace, but any hop across an edge to another namespace is followed automatically.
-2. **Explicit Hop Permissions:**
-   - Agent config dictates whether cross-namespace traversal is allowed (e.g. `allow_cross_domain: true` or `allowed_domains: ["work", "public"]`).
-3. **Depth-Decayed Weighting:**
-   - Edges crossing a namespace boundary incur a weight penalty or depth reduction so agents only see immediate boundary notes.
+Resolved in favor of permissive cross-domain PKM graph traversal with active namespace query filtering.
+- **Default Query Scoping:** Initial vector and text searches filter by the active namespace unless configured to search globally.
+- **Cross-Domain Traversal:** Graph walks and relational queries follow typed edges across namespace boundaries freely. A note in `coding` can link to a concept in `cognition` or a rule in `personal`.
+- **Purpose:** Restores true Personal Knowledge Management (PKM) semantics, eliminating the physical database silos of Basic Memory while preserving clean default views.
 
 ---
 
@@ -68,3 +64,28 @@ When an agent is queried within a specific domain, how should cross-namespace ed
 Instead of hard depth truncation (e.g. blind BFS cutoff at depth 2), Recognitor will leverage recursive SQL CTEs combined with in-memory graph algorithms via `petgraph` in Rust:
 - **Personalized PageRank / Topic Walk:** Biases the walk toward seed nodes matching the prompt, pruning off-topic branches mathematically regardless of depth.
 - **Hub Dampening:** High-degree hub nodes have their edge weights dampened by inverse degree to prevent generic index pages from overwhelming specific thematic threads.
+
+---
+
+## 7. Information Substitution & Templates (Open)
+
+How should templates and dynamic substitutions be handled for standardized note types?
+- **Template System:** Using reusable scaffolds for structured notes (e.g. decisions, session records, specifications).
+- **Variable Substitution:** How dynamic variables (dates, timestamps, active namespace, author metadata) are resolved during note creation.
+
+---
+
+## 8. Schema Validation Strategy (Open)
+
+How should note schema conformity be validated?
+- **Basic Memory Reference:** Analyze Basic Memory's lightweight Picoschema approach (`bm schema validate --strict`), where schemas are defined as Markdown notes (`type: schema`) with simple field types (`string`, `number`, `boolean`, `string[]`).
+- **Validation Timing:** Pre-commit hooks (`.githooks`) vs on-ingestion parsing warnings in SQLite.
+
+---
+
+## 9. CLI and MCP Interface Design (Deferred)
+
+Inventory and ergonomics of developer-facing CLI commands and LLM-facing MCP tools.
+- CLI commands (`rebuild`, `sync`, `validate`, `query`).
+- MCP tool definitions (`get_bootstrap`, `search`, `context`, `write_note`).
+- To be finalized after remaining conceptual mechanisms are locked down.
