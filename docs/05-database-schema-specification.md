@@ -11,6 +11,7 @@ This document defines the physical SQLite database schema for Recognitor. The da
 3. **Pacing Tiers as First-Class Citizens:** Notes store their information tier directly as semantic text strings (`profile`, `behavior`, `rule`, `knowledge`, `archive`), defaulting to `'knowledge'` for unclassified notes. Zero magic numbers or mental translation required.
 4. **Surgical Granularity:** The `observations` table indexes individual bracketed bullets (`- [category] ...`) with an open text category, allowing agents to retrieve atomic facts without pulling whole files into prompt context.
 5. **Disposable Projection:** The entire database can be deleted at any time and reconstructed deterministically via `recognitor rebuild`.
+6. **Native Vector Search:** Embedded `sqlite-vec` virtual tables store dense embeddings directly alongside relational data, enabling hybrid semantic search with zero external vector databases or daemons.
 
 ---
 
@@ -120,6 +121,24 @@ END;
 
 ---
 
+### 2.5 The Vector Search Table (`notes_vec`)
+
+SQLite virtual table using `sqlite-vec` (`vec0`) for dense embedding storage and cosine similarity search. Embeddings reference `notes.rowid` directly for zero-cost relational joins.
+
+```sql
+CREATE VIRTUAL TABLE notes_vec USING vec0(
+    rowid INTEGER PRIMARY KEY,
+    embedding float[384] distance_metric=cosine
+);
+
+-- Trigger to clean up vector embeddings when a note is deleted
+CREATE TRIGGER notes_vec_ad AFTER DELETE ON notes BEGIN
+    DELETE FROM notes_vec WHERE rowid = old.rowid;
+END;
+```
+
+---
+
 ## 3. Core Query Patterns
 
 ### 3.1 One-Shot Bootstrap Retrieval
@@ -177,4 +196,24 @@ LEFT JOIN notes n ON e.target_id = n.id
 WHERE n.id IS NULL
 GROUP BY e.target_id
 ORDER BY mention_count DESC;
+```
+
+### 3.5 Hybrid Semantic and Metadata Search
+Finds semantically similar notes filtered by active namespace and pacing tier, passing vector bytes directly with zero-copy:
+
+```sql
+SELECT 
+    n.id,
+    n.namespace,
+    n.tier,
+    n.title,
+    n.summary,
+    v.distance
+FROM notes_vec v
+JOIN notes n ON n.rowid = v.rowid
+WHERE v.embedding MATCH ?1
+  AND k = 10
+  AND n.namespace = ?2
+  AND n.tier != 'archive'
+ORDER BY v.distance ASC;
 ```

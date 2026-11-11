@@ -15,13 +15,13 @@ Recognitor uses an embedded SQLite engine via Rust (`rusqlite`) paired with in-m
 
 ## 2. Database Schema & Index Design (Resolved)
 
-Resolved with a unified SQLite relational schema, soft-key edges, observation tables, and external-content FTS5 search. Full specification defined in [05-database-schema-specification.md](05-database-schema-specification.md).
+Resolved with a unified SQLite relational schema, soft-key edges, observation tables, external-content FTS5 search, and native vector search. Full specification defined in [05-database-schema-specification.md](05-database-schema-specification.md).
 
 - **Unified Table & Namespace Mapping (Resolved):** Single `notes` table with indexed `namespace TEXT` and `tier TEXT` columns (defaulting to `'knowledge'`). Zero-DDL namespace creation with support for hierarchical paths (`work/backend`).
 - **Soft-Key Edges & Ghost Notes (Resolved):** Dedicated `edges` table with `(source_id, target_id, predicate, is_inline)`. `target_id` uses soft references, enabling ghost notes to surface as an unwritten concept backlog without constraint violations.
 - **Observation Granularity (Resolved):** Dedicated `observations` table parsing bracketed bullets (`- [category] ...`) with open string `category TEXT` for surgical fact retrieval.
 - **Full-Text Indexing (Resolved):** SQLite FTS5 external content virtual table (`notes_fts`) kept in sync via database triggers.
-- **Vector Indexing (Open):** Choice between `sqlite-vec` embedded C extension versus pure Rust in-memory HNSW index crate.
+- **Vector Indexing (Resolved):** Embedded `sqlite-vec` virtual table (`notes_vec`) via the official `sqlite-vec` Rust crate. Provides static in-process compilation with zero daemons, unified SQL joins between vector similarity and relational metadata, and zero-copy byte passing with `zerocopy`.
 
 ---
 
