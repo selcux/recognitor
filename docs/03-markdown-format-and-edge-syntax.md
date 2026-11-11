@@ -43,10 +43,10 @@ Handles OAuth2 token refresh and session rotation across backend services.
 
 | Section | Role | Parsing & Engine Handling |
 | :--- | :--- | :--- |
-| **Frontmatter** | Document metadata | Parsed with `serde_yaml`. Contains file attributes (`title`, `type`, `tags`). **Never contains edge definitions.** |
+| **Frontmatter** | Document metadata | Parsed with `serde_yaml`. Contains file attributes (`title`, `type`, `tags`). Undeclared `type` defaults automatically to Tier 4 (Domain Knowledge PKM). **Never contains edge definitions.** |
 | **H1 Heading (`# Title`)** | Primary note title | Fallback for title if omitted in frontmatter. |
 | **Summary Paragraph** | One-sentence synopsis | The first non-empty paragraph immediately following the H1 heading. Extracted into the SQLite `notes.summary` column for compact graph traversal. |
-| **Body / Observations** | Primary content | Free-form Markdown. Optional categorized observations (`- [fact] ...`, `- [rule] ...`). |
+| **Body / Observations** | Primary content | Free-form Markdown. Individual categorized observation bullets (`- [category] ...`) are parsed into the `observations` table with open `category TEXT`. |
 | **`## Relations`** | Typed graph edges | Dedicated section reserved at the bottom of the note for explicit, typed relational edges. |
 
 ---

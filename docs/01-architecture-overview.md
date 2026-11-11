@@ -77,9 +77,23 @@ Recognitor uses a **file-first** architecture:
 
 ---
 
-## 6. Storage Model & Schema Status
+## 6. Information Architecture: 5-Tier Lifecycle Model
 
-The concrete database schema is currently **to be defined** following alignment on:
-1. Markdown edge notation syntax.
-2. Metadata and frontmatter requirements.
-3. Vector indexing integration strategy.
+Recognitor partitions managed knowledge into 5 distinct pacing tiers based on rate of change and loading policy. Full specification in [04-information-tiers-and-lifecycle.md](04-information-tiers-and-lifecycle.md).
+
+1. **Tier 1 (Grounding Profile):** Stable user identity and working preferences injected at session start.
+2. **Tier 2 (Behavioral Frame):** Active communication persona and output style filters.
+3. **Tier 3 (Operational Rules):** Harness, repository, and workflow constraints.
+4. **Tier 4 (Domain Knowledge PKM - Default Tier):** On-demand technical notes, decisions, and concepts. Any note without an explicit frontmatter type automatically defaults to Tier 4.
+5. **Tier 5 (Deep Archive):** Raw session records and verbatim transcripts, excluded from standard searches.
+
+The engine provides a one-shot `recognitor.get_bootstrap()` tool to hydrate Tiers 1 and 2 in a single call, eliminating fragile multi-hop procedural file reads at session start.
+
+---
+
+## 7. Storage Model & Schema Status
+
+The concrete database schema is currently being aligned:
+- **Markdown edge syntax:** Resolved (see [03-markdown-format-and-edge-syntax.md](03-markdown-format-and-edge-syntax.md)).
+- **Information tiers & observation granularity:** Resolved (see [04-information-tiers-and-lifecycle.md](04-information-tiers-and-lifecycle.md)).
+- **Vector indexing & table DDL:** Open.

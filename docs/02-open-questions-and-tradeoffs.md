@@ -13,13 +13,14 @@ Recognitor uses an embedded SQLite engine via Rust (`rusqlite`) paired with in-m
 
 ---
 
-## 2. Database Schema & Index Design (Open)
+## 2. Database Schema & Index Design (Partially Resolved)
 
-How should notes, metadata, edges, and vectors be mapped into SQLite tables?
-- **Node attributes:** What metadata requires dedicated relational columns (e.g. namespace, path, title, mtime) versus remaining in raw frontmatter.
-- **Edge representation:** How to structure relational edges, predicate names, weights, and context.
-- **Vector indexing:** Whether to use an embedded SQLite extension (`sqlite-vec`) or maintain vector indices in pure Rust.
-- **Full-text indexing:** FTS5 table configuration and indexing scope.
+How should notes, metadata, edges, observations, and vectors be mapped into SQLite tables?
+- **Node & Metadata Attributes (Resolved):** Dedicated columns for `id`, `namespace`, `path`, `title`, `type`, `summary`, and `mtime`. Notes without `type` default to Tier 4 (Domain Knowledge PKM). Full specification in [04-information-tiers-and-lifecycle.md](04-information-tiers-and-lifecycle.md).
+- **Observation Granularity (Resolved):** Dedicated `observations` table parsing bracketed bullets (`- [category] ...`) with open string `category TEXT` to enable surgical fact retrieval without context bloat.
+- **Edge Representation (Resolved):** Dedicated `edges` table with `(source_id, target_id, predicate, is_inline)`.
+- **Vector Indexing (Open):** Whether to use an embedded SQLite extension (`sqlite-vec`) or maintain vector indices in pure Rust.
+- **Full-Text Indexing (Open):** FTS5 table configuration and indexing scope.
 
 ---
 
