@@ -4,28 +4,31 @@
 
 Recognitor is a local-first Personal Knowledge Management (PKM) memory management system designed specifically for Large Language Models (LLMs) and autonomous agents.
 
-While tools like Basic Memory demonstrated the value of combining local Markdown files with an MCP interface and graph traversal, they introduce structural bottlenecks when scaling across multiple domains. Recognitor addresses these bottlenecks by redesigning the storage model, edge semantics, and language runtime from the ground up while preserving human-readable plain text notes.
+Tools like Basic Memory demonstrated the value of combining local Markdown files with an MCP interface and graph traversal. Basic Memory serves as a reference, not a template: Recognitor keeps what works, and changes the format and mechanics where its own goals differ. Those goals are links that resolve across domains, a deterministic session start, and a native runtime, all while preserving human-readable plain-text notes.
 
 ---
 
 ## 2. Core Differences from Basic Memory
 
-| Capability | Basic Memory | Recognitor |
+Basic Memory facts below were checked against v0.24 (October 2026) and a real local vault on 2026-11-15.
+
+| Capability | Basic Memory (v0.24) | Recognitor |
 | :--- | :--- | :--- |
-| **Storage Architecture** | Physically separate SQLite database per project. | Single unified SQLite engine with domain namespaces. |
-| **Cross-Domain Traversal** | Broken at the database level. `[[project::note]]` is an unindexed reference. | Native. Relational edges connect nodes across namespaces in a single database. |
-| **Domain Isolation** | Hard silo on disk. | Logical namespaces (`work`, `personal`, `research`) filtered by default at query time. |
-| **Graph Edge Semantics** | Section-based `## Relations` with list items (`- type [[target]]`). | First-class edge relations with typed predicates, weights, and context. |
-| **Graph Algorithms** | None. Manual BFS in Python application code. | Recursive SQL CTEs for hierarchies, and in-memory `petgraph` algorithms (PageRank, Shortest Paths) in Rust. |
-| **Vector Search** | Basic/separate. | Built-in vector search via `sqlite-vec` or Rust-native HNSW indices. |
-| **Runtime & Latency** | Python MCP server (subject to interpreter cold start). | Pure Rust embedded engine (`rusqlite`) with sub-millisecond startup. |
+| **Storage** | One SQLite database for all projects; notes scoped by `project_id`. | One SQLite database; notes scoped by namespace (top-level folder). |
+| **Cross-Domain Links** | Search spans projects in one query, but links resolve only inside a project: `[[cognition::index]]` from another project stays unresolved. | Links resolve across namespaces, and graph walks follow them, bounded by session scope allowlists and sealed namespaces. |
+| **Session Start** | The agent follows multi-step reading instructions. | `load_bootstrap()` returns the whole bootstrap link tree in one call, or a session-start hook injects it. |
+| **Edge Notation** | `## Relations` with typed predicates and context; inline links become `links_to`. | Same notation, used as a reference. Edge weights are computed at query time, never authored. |
+| **Graph Algorithms** | Context building by depth-limited traversal (depth ≤ 5). | Recursive SQL walks; Personalized PageRank with hub dampening (resolved in principle). |
+| **Vector Search** | Always on: FastEmbed embeddings in `sqlite-vec`, hybrid with full-text search. | Optional feature, added later (DR1-04); `sqlite-vec` storage. |
+| **Sync** | File watcher. | On-demand sweep with a 2-second gate; no background process. |
+| **Runtime** | Python MCP server and CLI. | Native Rust binary; no interpreter start-up. |
 
 ---
 
 ## 3. Storage Architecture: Unified Graph with Namespaces
 
 ### The Silo Bottleneck in Existing Systems
-In Basic Memory, isolating domains requires creating distinct projects. Because each project is a separate SQLite file on disk, joins, referential integrity, and graph queries cannot cross project boundaries.
+In Basic Memory, isolating domains requires creating distinct projects. All projects share one SQLite database, but a link resolves only inside its own project. In a real 8-project vault, the link `relates_to [[cognition::index]]` written in the `recognitor` project is stored with no target, so graph context stops at the project boundary.
 
 ### The Recognitor Model
 Recognitor adopts a **Single Unified Graph with Logical Namespaces** powered by an embedded SQLite engine paired with Rust graph algorithms:
@@ -48,7 +51,7 @@ Recognitor adopts a **Single Unified Graph with Logical Namespaces** powered by 
 ```
 
 1. **Nodes:** Represents notes across domains, identified by unique IDs/paths and scoped by logical namespace.
-2. **Edges:** Typed relational edges connecting nodes across namespaces with optional predicates and weights.
+2. **Edges:** Typed relational edges connecting nodes across namespaces. Weights are computed at query time, never authored ([02-open-questions-and-tradeoffs.md §6](02-open-questions-and-tradeoffs.md)).
 3. **Query Scoping:**
    - **Default Scope:** When an agent works inside a specific context, queries filter by active namespace.
    - **Traversable Scope:** Relational queries can traverse edges across namespace boundaries when following connections.
@@ -67,33 +70,31 @@ Recognitor uses a **file-first** architecture:
 
 ## 5. Technology Stack Selection
 
-### Database Layer: SQLite + petgraph (Embedded in Rust)
-- **SQLite (`rusqlite`):** Zero-maintenance, in-process embedded storage engine with sub-millisecond execution, zero network overhead, and universal platform support.
-- **`petgraph`:** In-memory graph processing in pure Rust for complex graph traversals and ranking algorithms over edge lists loaded from SQLite.
+### Database Layer: SQLite (Embedded in Rust)
+- **SQLite (`rusqlite`):** Zero-maintenance, in-process embedded storage engine with no network round trip and universal platform support.
+- **Graph algorithms:** plain walks run as SQL queries or short Rust loops. Ranking algorithms run in Rust over links loaded from the `edges` table; the library choice (e.g. `petgraph` or hand-written) is an implementation detail, made when such an algorithm is built ([02 §6](02-open-questions-and-tradeoffs.md)).
 
 ### Language & Runtime Layer: Rust
-- Sub-millisecond startup for CLI invocations and MCP operations.
+- No interpreter start-up: the CLI runs as a native process, and the MCP server stays resident for the whole session. Latency targets are set and measured by the benchmark (DR1-16).
 - Single static binary distribution without runtime or daemon dependencies.
 
 ---
 
-## 6. Information Architecture: 5-Tier Lifecycle Model
+## 6. Information Architecture: Three Stores
 
-Recognitor partitions managed knowledge into 5 distinct pacing tiers based on rate of change and loading policy. Full specification in [04-information-tiers-and-lifecycle.md](04-information-tiers-and-lifecycle.md).
+Recognitor separates information by location, not by frontmatter `type`. Full specification in [04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md).
 
-1. **`profile` (Grounding Profile):** Stable user identity and working preferences injected at session start.
-2. **`behavior` (Behavioral Frame):** Active communication persona and output style filters.
-3. **`rule` (Operational Rules):** Harness, repository, and workflow constraints.
-4. **`knowledge` (Domain Knowledge PKM - Default Tier):** On-demand technical notes, decisions, and concepts. Any note without an explicit frontmatter type automatically defaults to `knowledge`.
-5. **`archive` (Deep Archive):** Raw session records and verbatim transcripts, excluded from standard searches.
+1. **Bootstrap (`bootstrap/`):** the user's profile, behavior, and global rules. `load_bootstrap()` loads it at session start as a link tree from `bootstrap/index.md`. Only linked notes load, so linking selects the active persona.
+2. **Knowledge namespaces (every other top-level folder):** on-demand PKM. `enter_namespace(ns)` returns the namespace's `index.md` and sets the default search scope; everything else is reached through search and graph walks.
+3. **Archive (`archive/`):** raw session records and verbatim transcripts, excluded from standard searches.
 
-The engine provides a one-shot `recognitor.get_bootstrap()` tool to hydrate `profile` and `behavior` tiers in a single call, eliminating fragile multi-hop procedural file reads at session start.
+The two loading functions replace fragile multi-hop procedural file reads at session start.
 
 ---
 
 ## 7. Storage Model & Schema Status
 
-The concrete database schema is currently being aligned:
-- **Markdown edge syntax:** Resolved (see [03-markdown-format-and-edge-syntax.md](03-markdown-format-and-edge-syntax.md)).
-- **Information tiers & observation granularity:** Resolved (see [04-information-tiers-and-lifecycle.md](04-information-tiers-and-lifecycle.md)).
-- **Vector indexing & table DDL:** Open.
+- **Markdown format & edge syntax:** Resolved (see [03-markdown-format-and-edge-syntax.md](03-markdown-format-and-edge-syntax.md)).
+- **Information stores & observation granularity:** Resolved (see [04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md)).
+- **Database schema, full-text and vector indexing:** Resolved (see [05-database-schema-specification.md](05-database-schema-specification.md)). Vector search is an optional feature, added later.
+- **Design reviews:** findings and their status are tracked in [06-design-reviews.md](06-design-reviews.md).
