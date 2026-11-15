@@ -20,7 +20,6 @@ Every Recognitor note adheres to the following structural layout. This example l
 ```markdown
 ---
 title: Auth Flow
-permalink: backend/auth-flow
 type: spec
 tags: [security, oauth]
 ---
@@ -43,7 +42,7 @@ Handles OAuth2 token refresh and session rotation across backend services.
 
 | Section | Role | Parsing & Engine Handling |
 | :--- | :--- | :--- |
-| **Frontmatter** | Document metadata | Parsed with `serde_yaml`. Contains file attributes (`title`, `permalink`, `type`, `tags`). `permalink` is the note's stable id (see §4). The namespace is not a frontmatter field: it is the note's top-level folder (see §4). `type` is free metadata: location, not `type`, decides how a note is loaded ([04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md)). `type` selects the note's schema, if one exists ([02 §8](02-open-questions-and-tradeoffs.md)). **Never contains edge definitions.** |
+| **Frontmatter** | Document metadata | Parsed with `serde_yaml`. Contains file attributes (`title`, `type`, `tags`). The note's id is its path, never a frontmatter field (see §4); a `permalink` field written by Basic Memory or Obsidian Publish is left untouched and ignored. The namespace is not a frontmatter field either: it is the note's top-level folder (see §4). `type` is free metadata: location, not `type`, decides how a note is loaded ([04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md)). `type` selects the note's schema, if one exists ([02 §8](02-open-questions-and-tradeoffs.md)). **Never contains edge definitions.** |
 | **H1 Heading (`# Title`)** | Primary note title | Fallback for title if omitted in frontmatter. |
 | **Summary Paragraph** | Short synopsis | The first non-empty paragraph immediately following the H1 heading, cut at a sentence boundary within 300 characters. Lint warns when the paragraph is longer. Extracted into the SQLite `notes.summary` column for compact graph traversal. |
 | **Body / Observations** | Primary content | Free-form Markdown. Observation bullets are parsed anywhere in the body into the `observations` table (see Observation Syntax below). `## Observations` is a convention, not a requirement. |
@@ -84,7 +83,7 @@ Typed edges describe exact relationships between notes and exist only under the 
 ```
 
 - **Predicate:** a single token immediately preceding the wikilink target (e.g. `part_of`, `supersedes`, `depends_on`): letters, digits, and `_`. Multi-word predicates are not supported.
-- **Target:** a wikilink containing the target note's title, filename, path, or permalink. Optional cross-namespace references use the `namespace::note` prefix. Resolution rules are defined in §4.
+- **Target:** a wikilink containing the target note's title, filename, or path. Optional cross-namespace references use the `namespace::note` prefix. Resolution rules are defined in §4.
 - **Context:** an optional trailing `(text)` is stored in `edges.context`.
 - **Lines of other shapes:** a line under `## Relations` that does not match `- <predicate> [[Target]] (context)`, such as `- see also [[X]]` or `- [[X]]`, still indexes its links as generic `links_to` edges, and lint warns.
 - **Outside `## Relations`:** a bullet like `- Mother [[Alice]]` in the body is an inline mention (Tier 2). Because typed edges live only in their section, prose never needs an escape syntax to avoid becoming a typed edge.
@@ -140,27 +139,27 @@ Notes in the `archive` namespace are full-text searchable, but the parser create
 
 ## 4. Note Identity and Link Resolution
 
-### Identity: the `permalink`
+### Identity: the path
 
-- **Note id:** the frontmatter `permalink` is the note's id (`notes.id`), e.g. `common/working-style/adhd-profile`.
-- **Stable across moves:** moving or renaming the file does not change the permalink, so links that target it keep resolving.
-- **Owned by the tool:** tools write the permalink once, when the note is created, and never change it. Humans leave it alone.
-- **Fallback:** a note without a `permalink` gets one derived from its path: lowercase, spaces turned into hyphens, `.md` dropped (`common/working-style/ADHD profile.md` → `common/working-style/adhd-profile`).
+Recognitor follows the Obsidian model: a note's address is its path ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
+
+- **Note id:** the path from the vault root, exactly as the file is named, without `.md` (`notes.id`), e.g. `common/working-style/ADHD profile`. There is no stored id and no slug conversion, so nothing can drift.
+- **`permalink` is ignored:** the frontmatter field means a web address to Obsidian Publish and an id to Basic Memory; Recognitor leaves it untouched and never indexes it.
+- **Case:** matching ignores case, as Windows and macOS file systems do. Two files in the same folder whose names differ only in case are an error ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
 - **Namespace:** the top-level folder under the vault root (`common/working-style/ADHD profile.md` → `common`). Deeper folders (`working-style`, `personas`) are just folders. Notes stored directly in the vault root belong to the `default` namespace. The namespace is never declared in frontmatter, so it has exactly one source. Hidden folders (`.git/`, `.obsidian/`, `.recognitor/`) are not namespaces and are never indexed.
 - **Reserved namespaces:** `bootstrap` (loaded at session start; its directory can be relocated) and `archive`. See [04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md).
 - **Entry point:** every namespace has an `index.md` at its top level.
-- **Moves:** moving a file into another top-level folder moves the note into that namespace. Its permalink stays the same, so after a move the permalink's prefix may name the old folder. That is fine: the permalink is only an id.
+- **Moves:** moving a file changes its id. Moving it into another top-level folder also moves the note into that namespace. Path-style links to it break; `move_note` reports them and `relink` fixes the ones the user picks ([07-interface-contracts.md §6.1](07-interface-contracts.md#61-moving-a-note)).
 
-### Links: resolved to a permalink
+### Links: resolved to a note id
 
-Wikilinks name a note by title (`[[ADHD profile]]`), by filename, by path, or with a namespace prefix (`[[cognition::index]]`). The engine resolves each one to a permalink in this order. Name matching is case-insensitive, and a "name" is a note's title or its filename without `.md`:
+Wikilinks name a note by title (`[[ADHD profile]]`), by filename, by path, or with a namespace prefix (`[[cognition::index]]`). The engine resolves each one to a note id in this order. Matching is case-insensitive, and a "name" is a note's title or its filename without `.md`:
 
-1. **Exact permalink:** `[[common/identity]]` matches `notes.id`.
-2. **Exact path:** `[[common/working-style/ADHD profile]]` matches a file path from the vault root, with or without `.md`. Explicit relative paths (`[[./same.md]]`, `[[../guides/Setup.md]]`) resolve relative to the linking note, to that exact file only.
-3. **Prefixed name:** `[[ns::Name]]` matches a name or the last permalink segment inside namespace `ns`.
-4. **Same-namespace name:** `[[Name]]` matches a name inside the source note's namespace.
-5. **Unique name:** `[[Name]]` matches a name that exists in exactly one namespace.
-6. **Ghost:** no match, or more than one match at the first step that finds any. The link is stored with `target_id = NULL`. An ambiguous link also raises a lint warning, because guessing would create a silently wrong edge.
+1. **Exact path:** `[[common/working-style/ADHD profile]]` matches a note id, with or without `.md`. Explicit relative paths (`[[./same.md]]`, `[[../guides/Setup.md]]`) resolve relative to the linking note, to that exact file only.
+2. **Prefixed name:** `[[ns::Name]]` matches a name inside namespace `ns`.
+3. **Same-namespace name:** `[[Name]]` matches a name inside the source note's namespace.
+4. **Unique name:** `[[Name]]` matches a name that exists in exactly one namespace.
+5. **Ghost:** no match, or more than one match at the first step that finds any. The link is stored with `target_id = NULL`. An ambiguous link also raises a lint warning, because guessing would create a silently wrong edge. A link that hits a case twin is an error naming both files.
 
 Filename matching matters for Obsidian, which links by filename even when the frontmatter title differs.
 
@@ -170,7 +169,7 @@ Filename matching matters for Obsidian, which links by filename even when the fr
 - **Ghosts heal:** after every sync that adds, removes, or retitles a note, all links are re-resolved. A link written before its target existed resolves once the target is created, wherever it lands (`backend/specs/security-architecture`, not only a guessed `backend/security-architecture`).
 - **Deletes revert to ghosts:** links to a deleted note return to `target_id = NULL` and show up in the ghost backlog.
 - **Title renames:** links that use the old title become ghosts and show up in the ghost backlog, unless the filename still matches.
-- **File moves:** a move never breaks a permalink link. A name link keeps resolving through steps 4 and 5, unless the move makes the name ambiguous.
+- **File moves:** a move breaks path-style links (`[[ideas/caching]]`) to the moved note. A name link keeps resolving through steps 3 and 4, unless the move makes the name ambiguous. A move made outside Recognitor shows up in the sweep as a deleted and a created file with the same checksum, and is reported as a probable move ([07-interface-contracts.md §6.2](07-interface-contracts.md#62-moves-outside-recognitor)).
 - **Obsidian:** Obsidian does not understand `[[ns::Title]]` and shows it as an unresolved link. The syntax stays because existing notes use it.
 
 ---

@@ -12,7 +12,7 @@ Information in an agent environment changes at different speeds and is read in d
 +--------------------------------------------------------------------------+
 | bootstrap/      profile · behavior · rules     load_bootstrap()          | <- every session, whole link tree
 +--------------------------------------------------------------------------+
-| <namespace>/    index.md                       enter_namespace(ns)       | <- when a session enters a namespace
+| <namespace>/    index.md                       load_namespace(ns)        | <- when a session enters a namespace
 |                 all other notes                search, graph walks       | <- on demand
 +--------------------------------------------------------------------------+
 | archive/        session records, transcripts   explicit request only     | <- frozen
@@ -25,7 +25,7 @@ Information in an agent environment changes at different speeds and is read in d
 | **Read as** | Instructions and grounding | Data | Data |
 | **Loaded** | Whole link tree, once per session | `index.md` on entry; everything else on demand | Only on explicit request |
 | **Engine treatment** | Tree walk from `index.md` | Full-text search, vector search (optional), graph walks | Full-text search on request |
-| **In search results** | Never | Yes, scoped to the active namespace by default | Only when requested |
+| **In search results** | Never | Yes, ranked higher when the search names their namespace | Only when requested |
 | **Main writer** | The user | Agents and the user | Agents, append only |
 
 ### Default Store Rule
@@ -89,12 +89,12 @@ Bootstrap notes are read as instructions in every future session, so writes to t
 
 Every top-level folder other than `bootstrap/` and `archive/` is a knowledge namespace ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)).
 
-### 3.1 Entry: `enter_namespace(ns)`
+### 3.1 Entry: `load_namespace(ns)`
 
-- Returns the body of `<ns>/index.md`, the namespace's entry point.
-- Makes `ns` the session's active namespace: later searches default to it ([02-open-questions-and-tradeoffs.md §5](02-open-questions-and-tradeoffs.md)).
-- A namespace without `index.md` returns a warning, and lint reports it.
-- `bootstrap` cannot be entered; `load_bootstrap()` loads it. `archive` can be entered explicitly.
+- Returns the body of `<ns>/index.md`, the namespace's entry point, plus one tool-generated line telling the agent to pass `ns` to `search`.
+- Keeps no state. The agent passes `ns` to later searches, which rank the namespace's notes higher without filtering out the rest ([07-interface-contracts.md §3-4](07-interface-contracts.md#3-load_namespacens)).
+- A namespace without `index.md` returns its note list instead, and lint reports it.
+- `bootstrap` cannot be loaded this way; `load_bootstrap()` loads it. `archive` can be loaded explicitly.
 
 ### 3.2 On-Demand Retrieval
 
@@ -120,7 +120,7 @@ All other knowledge notes are cold storage, queried through full-text search, ve
 
 Two ways load the same content:
 
-- **Instruction:** the harness instruction file says: "Session start: call `load_bootstrap()`, then `enter_namespace('<project>')`."
+- **Instruction:** the harness instruction file says: "Session start: call `load_bootstrap()`, then `load_namespace('<project>')`."
 - **Hook (preferred where supported):** a session-start hook runs `recognitor bootstrap`, and the harness adds its output to the context. Loading then does not depend on the model following an instruction. Claude Code supports such hooks.
 
 ### 5.2 Harness Instruction Files

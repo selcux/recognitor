@@ -15,7 +15,7 @@ Basic Memory facts below were checked against v0.24 (October 2026) and a real lo
 | Capability | Basic Memory (v0.24) | Recognitor |
 | :--- | :--- | :--- |
 | **Storage** | One SQLite database for all projects; notes scoped by `project_id`. | One SQLite database; notes scoped by namespace (top-level folder). |
-| **Cross-Domain Links** | Search spans projects in one query, but links resolve only inside a project: `[[cognition::index]]` from another project stays unresolved. | Links resolve across namespaces, and graph walks follow them, bounded by session scope allowlists and sealed namespaces. |
+| **Cross-Domain Links** | Search spans projects in one query, but links resolve only inside a project: `[[cognition::index]]` from another project stays unresolved. | Links resolve across namespaces, and graph walks follow them freely. A namespace is an entry point and a perspective, never a boundary. |
 | **Session Start** | The agent follows multi-step reading instructions. | `load_bootstrap()` returns the whole bootstrap link tree in one call, or a session-start hook injects it. |
 | **Edge Notation** | `## Relations` with typed predicates and context; inline links become `links_to`. | Same notation, used as a reference. Edge weights are computed at query time, never authored. |
 | **Graph Algorithms** | Context building by depth-limited traversal (depth ≤ 5). | Recursive SQL walks; Personalized PageRank with hub dampening (resolved in principle). |
@@ -50,11 +50,11 @@ Recognitor adopts a **Single Unified Graph with Logical Namespaces** powered by 
 +-------------------------------------------------------------+
 ```
 
-1. **Nodes:** Represents notes across domains, identified by unique IDs/paths and scoped by logical namespace.
+1. **Nodes:** Represents notes across domains, identified by their path and grouped by logical namespace.
 2. **Edges:** Typed relational edges connecting nodes across namespaces. Weights are computed at query time, never authored ([02-open-questions-and-tradeoffs.md §6](02-open-questions-and-tradeoffs.md)).
-3. **Query Scoping:**
-   - **Default Scope:** When an agent works inside a specific context, queries filter by active namespace.
-   - **Traversable Scope:** Relational queries can traverse edges across namespace boundaries when following connections.
+3. **Namespaces as Perspective:**
+   - **Entry Point:** An agent enters the knowledge base through a namespace's `index.md` and passes that namespace to searches, which rank its notes higher without filtering out the rest.
+   - **No Boundaries:** Searches and graph walks span the whole vault; the LLM decides when to follow links into other namespaces ([07-interface-contracts.md §1](07-interface-contracts.md#1-principles)).
 
 ---
 
@@ -85,7 +85,7 @@ Recognitor uses a **file-first** architecture:
 Recognitor separates information by location, not by frontmatter `type`. Full specification in [04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md).
 
 1. **Bootstrap (`bootstrap/`):** the user's profile, behavior, and global rules. `load_bootstrap()` loads it at session start as a link tree from `bootstrap/index.md`. Only linked notes load, so linking selects the active persona.
-2. **Knowledge namespaces (every other top-level folder):** on-demand PKM. `enter_namespace(ns)` returns the namespace's `index.md` and sets the default search scope; everything else is reached through search and graph walks.
+2. **Knowledge namespaces (every other top-level folder):** on-demand PKM. `load_namespace(ns)` returns the namespace's `index.md` and keeps no state; the agent passes `ns` to later searches as a ranking perspective. Everything else is reached through search and graph walks.
 3. **Archive (`archive/`):** raw session records and verbatim transcripts, excluded from standard searches.
 
 The two loading functions replace fragile multi-hop procedural file reads at session start.
@@ -98,3 +98,4 @@ The two loading functions replace fragile multi-hop procedural file reads at ses
 - **Information stores & observation granularity:** Resolved (see [04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md)).
 - **Database schema, full-text and vector indexing:** Resolved (see [05-database-schema-specification.md](05-database-schema-specification.md)). Vector search is an optional feature, added later.
 - **Design reviews:** findings and their status are tracked in [06-design-reviews.md](06-design-reviews.md).
+- **Interface contracts:** MCP tools and CLI commands, with inputs, outputs, budgets and conflict rules: [07-interface-contracts.md](07-interface-contracts.md).

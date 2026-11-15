@@ -17,8 +17,8 @@ Recognitor uses an embedded SQLite engine via Rust (`rusqlite`), with graph algo
 
 Resolved with a unified SQLite relational schema, soft-key edges, observation tables, external-content FTS5 search, and native vector search. Full specification defined in [05-database-schema-specification.md](05-database-schema-specification.md).
 
-- **Unified Table & Namespace Mapping (Resolved):** Single `notes` table with an indexed `namespace TEXT` column. The reserved namespaces `bootstrap` and `archive` decide how notes are treated; there is no tier column (§10). Zero-DDL namespace creation. Notes are identified by their frontmatter `permalink`. The namespace is the note's top-level folder under the vault root; deeper folders are just folders, and moving a file into another top-level folder moves it into that namespace (DR1-02).
-- **Soft-Key Edges & Ghost Notes (Resolved):** Dedicated `edges` table with `(source_id, target_ref, target_id, predicate, is_inline)`. `target_ref` keeps the link as written; `target_id` is the resolved permalink or `NULL`, enabling ghost notes to surface as an unwritten concept backlog without constraint violations, and to heal once the target is written. Resolution rules in [03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution).
+- **Unified Table & Namespace Mapping (Resolved):** Single `notes` table with an indexed `namespace TEXT` column. The reserved namespaces `bootstrap` and `archive` decide how notes are treated; there is no tier column (§10). Zero-DDL namespace creation. Notes are identified by their path; the frontmatter `permalink` is not indexed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)). The namespace is the note's top-level folder under the vault root; deeper folders are just folders, and moving a file into another top-level folder moves it into that namespace (DR1-02).
+- **Soft-Key Edges & Ghost Notes (Resolved):** Dedicated `edges` table with `(source_id, target_ref, target_id, predicate, is_inline)`. `target_ref` keeps the link as written; `target_id` is the resolved note id or `NULL`, enabling ghost notes to surface as an unwritten concept backlog without constraint violations, and to heal once the target is written. Resolution rules in [03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution).
 - **Observation Granularity (Resolved):** Dedicated `observations` table parsing bracketed bullets (`- [category] ...`) with open string `category TEXT` for surgical fact retrieval.
 - **Full-Text Indexing (Resolved):** SQLite FTS5 external content virtual table (`notes_fts`) kept in sync via database triggers.
 - **Vector Indexing (Resolved, Optional, Deferred):** Semantic search is an optional feature added after the core (full-text search + graph). The core never depends on it. Embedding model, runtime, schedule, and chunking are chosen when the feature is built (DR1-04). Storage design: embedded `sqlite-vec` virtual table (`notes_vec`) via the official `sqlite-vec` Rust crate. Provides static in-process compilation with zero daemons, unified SQL joins between vector similarity and relational metadata, and zero-copy byte passing with `zerocopy`.
@@ -57,26 +57,20 @@ Resolved in favor of **deterministic on-demand reconciliation with a 2-second TT
 | **Shared TTL gate** | The 2-second gate reads `last_sweep_finished_ms` from the `meta` table, not from process memory. | CLI invocations and several MCP servers (one per agent session) share one gate. |
 | **Single writer** | The sweep runs inside `BEGIN IMMEDIATE` with WAL mode and `busy_timeout`. | Concurrent processes queue instead of indexing the same files twice. |
 | **Write-through** | MCP write tools update the file and the index in the same call. | A search inside the 2-second window still sees the agent's own write. |
-| **Optimistic concurrency** | Write and edit tools take `expected_checksum` and refuse on mismatch, returning the current checksum. | A human editing the same note in Obsidian never loses work silently. |
+| **Optimistic concurrency** | Each edit checks the part it overwrites and, on a mismatch, is refused with the current version of that part. The check and the write run under SQLite's write lock. Full rules in [07-interface-contracts.md §5](07-interface-contracts.md#5-writes-and-conflicts). | Neither another agent nor a human editing in Obsidian loses work silently. |
 | **Atomic file writes** | Write to a temporary file in the same directory, then rename over the target. | Editors and sync tools never see a half-written note. |
 | **Surgical edits** | Edits patch byte ranges taken from the parser's source offsets (`pulldown-cmark` offset iterator). Markdown is never regenerated from the parse tree. | Re-serializing a parse tree rewrites formatting the human chose. |
 | **Database location** | Per-user OS cache directory, one database per vault, never inside the vault. | See [05-database-schema-specification.md §5](05-database-schema-specification.md#5-database-file-location). |
 
 ---
 
-## 5. Cross-Domain Agent Scoping & Privacy (Resolved)
+## 5. Cross-Domain Agent Scoping (Resolved)
 
-Resolved in favor of permissive cross-domain PKM graph traversal with active namespace query filtering.
-- **Default Query Scoping:** Initial vector and text searches filter by the active namespace, set by `enter_namespace(ns)`, unless configured to search globally. Bootstrap notes never appear in searches or graph walks; archive notes appear only on explicit request.
-- **Cross-Domain Traversal:** Graph walks and relational queries follow typed edges across namespace boundaries freely. A note in `coding` can link to a concept in `cognition` or a rule in `personal`.
-- **Purpose:** Restores true Personal Knowledge Management (PKM) semantics. Basic Memory keeps projects in one database but resolves links only inside a project; Recognitor resolves and follows them across namespaces while preserving clean default views.
-
-### Scope Boundaries (DR1-07)
-
-The default filter only limits where a search **starts**. Without boundaries, one `relates_to` edge from a work note pulls personal or health summaries into a work session. Two mechanisms bound traversal without giving up the permissive default:
-
-- **Session Scope Allowlist:** a session can declare the namespaces it may read (e.g. `[recognitor, common, compass]`), passed when the MCP server or CLI starts. Searches and graph walks never return notes outside the list, and edges leaving it are not followed. Without an allowlist, every namespace that is not sealed is readable.
-- **Sealed Namespaces:** namespaces marked `sealed` in config (e.g. health or archive material) are never searched or traversed unless the session's allowlist names them explicitly.
+Resolved in favor of an open graph: a namespace is an entry point and a perspective, never a boundary.
+- **Namespace as Perspective:** `search(query, ns?)` ranks notes in `ns`, and notes linked from it, higher; every note in the vault can still match. The agent learns `ns` from `load_namespace(ns)` and passes it itself, because the server keeps no state ([07-interface-contracts.md §3-4](07-interface-contracts.md#3-load_namespacens)). Bootstrap notes never appear in searches or graph walks; archive notes appear only on explicit request.
+- **Cross-Domain Traversal:** Graph walks and relational queries follow typed edges across namespace boundaries freely. A note in `coding` can link to a concept in `cognition` or a rule in `personal`. The LLM decides when to jump, based on the conversation and the ranking.
+- **Purpose:** Restores true Personal Knowledge Management (PKM) semantics. Basic Memory keeps projects in one database but resolves links only inside a project; Recognitor resolves and follows them across namespaces.
+- **No Isolation in Early Versions:** the per-session allowlist and sealed namespaces proposed in DR1-07 are dropped to keep the first version simple. They can return if real use shows that unrelated material (for example health notes in a coding session) surfaces too often.
 
 ---
 
@@ -94,7 +88,7 @@ Instead of hard depth truncation (e.g. blind BFS cutoff at depth 2), Recognitor 
 
 How should templates and dynamic substitutions be handled for standardized note types?
 - **Template System:** Using reusable scaffolds for structured notes (e.g. decisions, session records, specifications).
-- **Variable Substitution:** How dynamic variables (dates, timestamps, active namespace, author metadata) are resolved during note creation.
+- **Variable Substitution:** How dynamic variables (dates, timestamps, the note's namespace, author metadata) are resolved during note creation.
 
 ---
 
@@ -139,12 +133,13 @@ Resolved in favor of lightweight **Structural Linting** plus optional **vault-wi
 
 ---
 
-## 9. CLI and MCP Interface Design (Partially Resolved)
+## 9. CLI and MCP Interface Design (Resolved)
 
-Inventory and ergonomics of developer-facing CLI commands and LLM-facing MCP tools.
-- **Decided (§10):** MCP `load_bootstrap()` and `enter_namespace(ns)`; CLI `recognitor bootstrap [--list]` and `recognitor config set bootstrap-dir <path>`.
-- **Open:** remaining MCP tools (`search`, `context`, `read_note`, `write_note`, `edit_note`, `move_note`, `delete_note`, `ghosts`) and CLI commands (`lint`, `sync`, `rebuild`, `query`).
-- **Order (DR1-15):** tool contracts come before further schema work. The next design document is `07-interface-contracts.md`: for each MCP tool and CLI command it defines inputs, outputs, a token budget, and the queries the tool runs. After it exists, every schema change must be justified by a contract.
+Resolved in [07-interface-contracts.md](07-interface-contracts.md): a stateless server, MCP tools for every-session agent work, and a CLI limited to what a human cannot do by hand.
+- **MCP:** `load_bootstrap`, `load_namespace`, `search`, `context`, `read_note`, `write_note`, `edit_note`, `move_note`, `relink`, `delete_note`.
+- **CLI:** `bootstrap [--list]`, `search`, `context`, `read`, `move`, `ghosts`, `lint [--strict]`, `trash empty`, `sync`, `rebuild`, `config get/set`. No write or edit commands: humans edit the files directly.
+- **Rejected:** a raw-SQL `query` command, a `--json` output flag, and `ghosts` as an MCP tool.
+- **Order (DR1-15):** every schema change must now be justified by a contract in doc 07.
 
 ---
 
@@ -155,7 +150,7 @@ Resolved in favor of **three stores separated by location** (bootstrap, knowledg
 - **Bootstrap as a tree:** `load_bootstrap()` walks `## Relations` links from `bootstrap/index.md`, depth-first in written order, never following inline mentions, `supersedes`, reversed edges, or links that leave the bootstrap. Notes no link reaches do not load, so linking selects the active persona (DR1-01).
 - **Relocatable:** the bootstrap defaults to `<vault>/bootstrap/`; `recognitor config set bootstrap-dir <path>` moves it. Its notes always belong to the reserved namespace `bootstrap`.
 - **Global rules only:** everything in the bootstrap applies in every project. Project rules stay in the repository's own instruction files (`AGENTS.md`, `CLAUDE.md`, Cursor rules), so each rule has one home.
-- **Namespace entry:** every namespace has an `index.md`; `enter_namespace(ns)` returns it and sets the default search scope.
+- **Namespace entry:** every namespace has an `index.md`; `load_namespace(ns)` returns it and keeps no state ([07-interface-contracts.md §3](07-interface-contracts.md#3-load_namespacens)).
 - **Same tables:** bootstrap notes share the schema but get no full-text or vector rows, so search cannot return them.
 - **Session start:** an instruction in the harness file, or a session-start hook running `recognitor bootstrap` where the harness supports one.
 - **Rejected: a separate database table for the bootstrap.** Same Markdown means the same parser, link resolver, and lint; leaving bootstrap notes out of the search indexes gives the same isolation.
@@ -183,7 +178,7 @@ Targets, not measurements. Percentiles are p95; Windows is measured first becaus
 
 | Operation | p95 target | Rationale |
 | :--- | :--- | :--- |
-| `load_bootstrap()`, `enter_namespace()`, full-text search | < 50 ms | Disappears inside an agent turn that takes seconds |
+| `load_bootstrap()`, `load_namespace()`, full-text search | < 50 ms | Disappears inside an agent turn that takes seconds |
 | Sync sweep, no changes, 10,000 files | < 100 ms | Runs before queries once the 2-second gate expires |
 | `recognitor bootstrap`, cold process start | < 100 ms | A session-start hook adds this to every session |
 | Full `rebuild`, without vectors | < 10 s | Runs after every schema version change |

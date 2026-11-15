@@ -19,3 +19,4 @@ Recognitor is inspired by the simplicity of Markdown-based agent memory (such as
 - [Information Stores & Lifecycle](docs/04-information-stores-and-lifecycle.md) - Bootstrap, knowledge namespaces, archive, and session loading.
 - [Database Schema](docs/05-database-schema-specification.md) - SQLite tables, indexes, query patterns, and database location.
 - [Design Reviews](docs/06-design-reviews.md) - Review log and finding tracker.
+- [Interface Contracts](docs/07-interface-contracts.md) - MCP tools and CLI commands: inputs, outputs, token budgets, and write-conflict rules.

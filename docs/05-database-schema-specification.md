@@ -25,7 +25,7 @@ Stores note metadata, extracted summaries, and body content.
 ```sql
 CREATE TABLE notes (
     pk INTEGER PRIMARY KEY,                    -- Stable rowid alias; notes_fts and notes_vec rows key on this
-    id TEXT NOT NULL UNIQUE,                   -- Frontmatter permalink (e.g. "common/working-style/adhd-profile"); derived from path when absent
+    id TEXT NOT NULL UNIQUE,                   -- Path without ".md", exact case (e.g. "common/working-style/ADHD profile"); never read from frontmatter (doc 07 §6)
     namespace TEXT NOT NULL,                   -- Top-level folder (e.g. "common", "compass"); reserved: "bootstrap", "archive"; "default" for root files
     type TEXT NOT NULL DEFAULT 'note',         -- Free frontmatter metadata (e.g. "profile", "decision", "spec", "note"); never decides loading; selects the type schema
     title TEXT NOT NULL,                       -- Human-readable title from H1 or frontmatter
@@ -41,6 +41,7 @@ CREATE INDEX idx_notes_namespace ON notes(namespace);
 CREATE INDEX idx_notes_type ON notes(type);
 CREATE INDEX idx_notes_mtime ON notes(mtime);
 CREATE INDEX idx_notes_title ON notes(namespace, title COLLATE NOCASE);  -- Link resolution by title
+CREATE INDEX idx_notes_id_nocase ON notes(id COLLATE NOCASE);           -- Case-insensitive id matching; finds case twins (doc 07 §6)
 ```
 
 ---
@@ -54,7 +55,7 @@ CREATE TABLE edges (
     source_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
     predicate TEXT NOT NULL,                   -- e.g. "part_of", "has_part", "supersedes", "relates_to", "links_to"
     target_ref TEXT NOT NULL,                  -- Link exactly as written: "Security Architecture", "cognition::index", "../ops/Deploy%20Checklist.md"
-    target_id TEXT,                            -- Resolved note id (permalink); NULL = ghost note
+    target_id TEXT,                            -- Resolved note id; NULL = ghost note
     is_inline INTEGER NOT NULL DEFAULT 0,      -- 0: explicit relation from ## Relations, 1: inline link
     position INTEGER NOT NULL,                 -- Source line of the link; keeps the written order for load_bootstrap()
     context TEXT,                              -- Trailing "(context)" of a ## Relations line, or surrounding snippet if inline
@@ -186,7 +187,7 @@ SQLite virtual table using `sqlite-vec` (`vec0`, ≥ 0.1.6) for dense embedding 
 CREATE VIRTUAL TABLE notes_vec USING vec0(
     note_pk integer primary key,               -- = notes.pk
     embedding float[384] distance_metric=cosine,
-    namespace text                             -- Metadata column, filtered inside the KNN search
+    namespace text                             -- Metadata column; excludes archive inside the KNN search
 );
 
 -- Trigger to clean up vector embeddings when a note is deleted
@@ -233,7 +234,7 @@ WHERE e.source_id = ?1
 ORDER BY e.position;
 ```
 
-### 3.2 Namespace Entry (`enter_namespace(ns)`)
+### 3.2 Namespace Entry (`load_namespace(ns)`)
 
 ```sql
 SELECT title, content
@@ -291,7 +292,7 @@ ORDER BY mention_count DESC;
 ```
 
 ### 3.6 Hybrid Semantic and Metadata Search
-Finds semantically similar notes in the active namespace. The filter sits on a `vec0` metadata column, so it applies during the search, not after it:
+Finds semantically similar notes across the whole vault (optional feature). The namespace is a ranking perspective, not a filter ([07-interface-contracts.md §4.1](07-interface-contracts.md#41-ranking)), so the only filter is the archive exclusion. It sits on a `vec0` metadata column, so it applies during the search, not after it (DR1-05). The query fetches more candidates than a result page holds, because the `ns` boost reorders them afterwards:
 
 ```sql
 SELECT
@@ -303,8 +304,8 @@ SELECT
 FROM notes_vec v
 JOIN notes n ON n.pk = v.note_pk
 WHERE v.embedding MATCH ?1
-  AND k = 10
-  AND v.namespace = ?2
+  AND k = 50                                   -- candidates; the ns boost and paging pick the final 10
+  AND v.namespace != 'archive'                 -- archive only on explicit request
 ORDER BY v.distance ASC;
 ```
 

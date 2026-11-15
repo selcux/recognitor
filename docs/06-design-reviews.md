@@ -226,17 +226,17 @@ You get something working early, and it answers half of this review with data: r
 | Id | Finding | Severity | Status |
 | :--- | :--- | :--- | :--- |
 | DR1-01 | Bootstrap fails on the actual vault (namespace match, no selection, ordering, budget, doc mismatch) | Critical | Resolved: three stores by location; `load_bootstrap()` link tree (doc 02 §10, doc 04 §2, doc 05 §3.1) |
-| DR1-02 | Link resolution and note identity are not specified | Critical | Resolved: permalink as id, top-level folder as namespace, resolution order (doc 03 §4, doc 05 §2.1-2.2) |
+| DR1-02 | Link resolution and note identity are not specified | Critical | Resolved: path as id (permalink first, replaced by the path on 2026-11-15), top-level folder as namespace, resolution order, move and relink flow (doc 03 §4, doc 05 §2.1-2.2, doc 07 §6) |
 | DR1-03 | Unstable `rowid` silently corrupts full-text and vector search | Critical | Resolved: doc 05 §2.1, §2.4, §4 |
 | DR1-04 | Embedding pipeline doesn't exist yet | High | Resolved: kept as optional feature, built later; model and runtime chosen then (doc 02 §2, doc 05 §2.5) |
 | DR1-05 | Vector search filters after ranking | High | Resolved: doc 05 §2.5, §3.5 |
 | DR1-06 | Sync under concurrency (multi-process, timestamps, write-through, lost updates, DB location) | High | Resolved: doc 02 §4, doc 05 §2.6, §4, §5 |
-| DR1-07 | Cross-domain traversal contradicts the per-project read rule | High | Resolved: allowlist + sealed namespaces (doc 02 §5) |
+| DR1-07 | Cross-domain traversal contradicts the per-project read rule | High | Superseded: allowlist and sealed namespaces dropped on 2026-11-15; a namespace is a perspective, not a boundary, with no isolation in early versions (doc 02 §5, doc 07 §1) |
 | DR1-08 | Notes can promote themselves into the system prompt; archive tier fails open | High | Resolved: archive path rule, bootstrap write flag, new bootstrap notes load only once linked (doc 04 §2.3, §4) |
 | DR1-09 | Overclaims (startup, traversal tokens, edge weights, Basic Memory comparison) | Medium | Resolved: claims restated or deferred to the benchmark; weights computed; comparison rebuilt from Basic Memory v0.24 (doc 01 §2-5, doc 02 §6, doc 03, README) |
 | DR1-10 | Parser collisions with the real vault | Medium | Resolved: observation, relation, link-form, Markdown-link, code, qualifier and summary rules, checked against Basic Memory v0.24 (doc 03 §2-4, doc 05 §2.2-2.3, doc 04 §4) |
 | DR1-11 | Schema nits (edges table, duplicate facts, superseded status, observation ids and search, doc 03 `INSERT`) | Medium | Resolved: `WITHOUT ROWID` edges, inverse pairs merged in queries, edge-based superseded status, content-hash observation ids, `observations_fts` (doc 05 §2.2-2.3, §4.2, doc 03 §3, §5) |
-| DR1-12 | Tiers vs the real vault (empty `rule` tier, active namespace source, schema gate) | Medium | Resolved: tiers replaced by stores, active namespace set by `enter_namespace` (doc 04), vault-wide TOML type schemas with `lint --strict` gate (doc 02 §8) |
+| DR1-12 | Tiers vs the real vault (empty `rule` tier, active namespace source, schema gate) | Medium | Resolved: tiers replaced by stores, namespace passed by the agent after `load_namespace` (stateless server; doc 04 §3.1, doc 07 §3), vault-wide TOML type schemas with `lint --strict` gate (doc 02 §8) |
 | DR1-13 | Doc hygiene | Medium | Resolved: README links all docs; doc 01 §7 status current; doc 04 renamed to `04-information-stores-and-lifecycle.md`; observations DDL lives only in doc 05; `spec` used consistently; strict lint exits non-zero (doc 02 §8) |
 | DR1-14 | petgraph probably isn't needed | Medium | Resolved: graph library demoted to an implementation detail; plain link-following first, Personalized PageRank only if the benchmark demands it (doc 01 §5, doc 02 §1, §6) |
 | DR1-15 | Tool contracts should come before the schema | Process | Resolved: `07-interface-contracts.md` is the next design doc; schema changes must be justified by a contract (doc 02 §9) |
