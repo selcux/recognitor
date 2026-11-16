@@ -316,7 +316,7 @@ Both are built from the rules above; no new decisions.
 | :--- | :--- | :--- |
 | **Input** | `path` from the vault root (`.md` optional), `content` (the whole file, frontmatter included), optional `expected_checksum` | `note`, `new_path`, `expected_checksum` |
 | **Without checksum** | Create only; rejected if the note exists (§5.2) | Not allowed |
-| **Refused when** | The key already exists (§6) | The target's key already exists, unless it is the note's own key: a case-only rename is allowed and breaks no links (§6) |
+| **Refused when** | The key already exists (§6), or the path has no top-level folder | The target's key already exists, unless it is the note's own key: a case-only rename is allowed and breaks no links (§6). Also when `new_path` has no top-level folder |
 | **Output** | `<id>  checksum: <12 hex>` | The new id, and the path-style links that broke, with the `relink` call that fixes them (§6.1) |
 | **Folders** | Created as needed; existing folders keep their spelling (§6) | Created as needed; existing folders keep their spelling (§6) |
 

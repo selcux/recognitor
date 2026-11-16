@@ -26,7 +26,7 @@ Stores note metadata, extracted summaries, and body content.
 CREATE TABLE notes (
     pk INTEGER PRIMARY KEY,                    -- Stable rowid alias; notes_fts and notes_vec rows key on this
     key TEXT NOT NULL UNIQUE,                  -- The note's id lowercased (e.g. "common/working-style/adhd profile"); edges and observations reference it; never read from frontmatter (doc 03 §4, doc 07 §6)
-    namespace TEXT NOT NULL,                   -- Top-level folder, lowercased (e.g. "common", "compass"); reserved: "bootstrap", "archive"; "default" for root files
+    namespace TEXT NOT NULL,                   -- Top-level folder, lowercased (e.g. "common", "compass"); reserved: "bootstrap", "archive"; files in the vault root are not notes
     type TEXT NOT NULL DEFAULT 'note',         -- Free frontmatter metadata (e.g. "profile", "decision", "spec", "note"); never decides loading; selects the type schema
     title TEXT NOT NULL,                       -- Human-readable title from H1 or frontmatter, as written
     title_key TEXT NOT NULL,                   -- Title lowercased; link resolution by title
