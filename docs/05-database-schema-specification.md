@@ -7,7 +7,7 @@ This document defines the physical SQLite database schema for Recognitor. The da
 ## 1. Schema Design Principles
 
 1. **Unified Relational Graph:** Notes, edges, and observations coexist in a single SQLite database across all namespaces, eliminating siloed databases and enabling cross-domain graph traversal.
-2. **Soft Foreign Keys for Ghost Links:** `edges.source_key` strictly references `notes.key`. `edges.target_ref` keeps the link exactly as written, and `edges.target_key` holds the resolved note key, or `NULL` while the target does not exist. References to uncreated notes are preserved as ghost links without violating database constraints, and heal automatically when the target note appears.
+2. **Soft Foreign Keys for Ghost Links:** `edges.source_key` strictly references `notes.key`. `edges.target_ref` keeps the link exactly as written, `edges.ref_key` holds its lowercase key for matching, and `edges.target_key` holds the resolved note key, or `NULL` while the target does not exist. References to uncreated notes are preserved as ghost links without violating database constraints, and heal automatically when the target note appears.
 3. **Location Decides Treatment:** the reserved namespaces `bootstrap` and `archive` decide how notes are treated ([04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md)). Bootstrap notes share the same tables but never get full-text or vector rows, so search cannot return them. There is no tier column; `type` is free metadata. What each tool may do in each store is defined in [07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access).
 4. **Surgical Granularity:** The `observations` table indexes individual bracketed bullets (`- [category] ...`) with an open text category, allowing agents to retrieve atomic facts without pulling whole files into prompt context.
 5. **Disposable Projection:** The entire database can be deleted at any time and reconstructed deterministically via `recognitor rebuild`. Schema changes never need migrations (see §4.3).
@@ -30,6 +30,7 @@ CREATE TABLE notes (
     type TEXT NOT NULL DEFAULT 'note',         -- Free frontmatter metadata (e.g. "profile", "decision", "spec", "note"); never decides loading; selects the type schema
     title TEXT NOT NULL,                       -- Human-readable title from H1 or frontmatter, as written
     title_key TEXT NOT NULL,                   -- Title lowercased; link resolution by title
+    name_key TEXT NOT NULL,                    -- Filename without ".md", lowercased; link resolution by filename
     path TEXT NOT NULL UNIQUE,                 -- Path as written, relative to its root (e.g. "common/working-style/ADHD profile.md"); opens the file; output shows it without ".md" as the note's id; notes from a custom bootstrap directory are stored as "bootstrap/<relative path>"
     summary TEXT,                              -- First paragraph synopsis for token-efficient graph traversal
     content TEXT NOT NULL,                     -- Raw Markdown content
@@ -41,10 +42,11 @@ CREATE TABLE notes (
 CREATE INDEX idx_notes_namespace ON notes(namespace);
 CREATE INDEX idx_notes_type ON notes(type);
 CREATE INDEX idx_notes_mtime ON notes(mtime);
-CREATE INDEX idx_notes_title ON notes(namespace, title_key);  -- Link resolution by title
+CREATE INDEX idx_notes_title ON notes(title_key);  -- Link resolution by title, in one namespace or the whole vault
+CREATE INDEX idx_notes_name ON notes(name_key);    -- Link resolution by filename
 ```
 
-- **Names are keys:** `key`, `namespace` and `title_key` hold lowercase keys made in Rust with Unicode lowercasing ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)). Query parameters are lowercased the same way before they reach SQL. `COLLATE NOCASE` is never used for names, because it folds only A to Z.
+- **Names are keys:** `key`, `namespace`, `title_key` and `name_key` hold lowercase keys made in Rust with Unicode lowercasing ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)). Query parameters are lowercased the same way before they reach SQL. `COLLATE NOCASE` is never used for names, because it folds only A to Z.
 - **Spelling lives in `path` and `title`:** output, and opening the file, use them. A case-only rename keeps `key` and updates `path` (§4.2), so edges and observations are untouched.
 - **Case twins never reach the database:** files that share a key are left out, and nothing records them. The sweep finds them again in the file list each time and reports them until one is renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
 
@@ -58,16 +60,18 @@ Stores directional relations between notes.
 CREATE TABLE edges (
     source_key TEXT NOT NULL REFERENCES notes(key) ON DELETE CASCADE,
     predicate TEXT NOT NULL,                   -- e.g. "part_of", "has_part", "supersedes", "relates_to", "links_to"
-    target_ref TEXT NOT NULL,                  -- Link exactly as written: "Security Architecture", "cognition::index", "../ops/Deploy%20Checklist.md"
+    target_ref TEXT NOT NULL,                  -- Link exactly as written: "Security Architecture", "cognition::index", "../ops/Deploy%20Checklist.md"; output shows it for ghosts
+    ref_key TEXT NOT NULL,                     -- The link's key for matching (doc 03 §4): "security architecture", "cognition::index", "backend/ops/deploy checklist"
     target_key TEXT,                           -- Resolved note key; NULL = ghost note
     is_inline INTEGER NOT NULL DEFAULT 0,      -- 0: explicit relation from ## Relations, 1: inline link
     position INTEGER NOT NULL,                 -- Source line of the link; keeps the written order for load_bootstrap()
     context TEXT,                              -- Trailing "(context)" of a ## Relations line, or surrounding snippet if inline
-    PRIMARY KEY (source_key, predicate, target_ref)
+    PRIMARY KEY (source_key, predicate, ref_key)
 ) WITHOUT ROWID;
 
 -- The primary key already serves outgoing lookups (source_key, then predicate)
-CREATE INDEX idx_edges_target ON edges(target_key, predicate);   -- Backlinks, ghost discovery, and re-resolution
+CREATE INDEX idx_edges_target ON edges(target_key, predicate);   -- Backlinks, ghost discovery, and the delete trigger
+CREATE INDEX idx_edges_ref ON edges(ref_key);                    -- Re-resolution after a note is added, removed or renamed
 
 -- A deleted note turns every link pointing at it back into a ghost
 CREATE TRIGGER notes_edges_ad AFTER DELETE ON notes BEGIN
@@ -75,9 +79,9 @@ CREATE TRIGGER notes_edges_ad AFTER DELETE ON notes BEGIN
 END;
 ```
 
-Resolution rules for `target_ref` → `target_key` are defined in [03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution). The engine re-resolves links after every sync that adds, removes, or retitles a note.
+Resolution rules for `ref_key` → `target_key` are defined in [03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution). Re-resolution is targeted: after a note is added, removed, renamed or retitled, the engine re-resolves only the edges whose `ref_key` matches one of that note's names, old or new.
 
-- **One row per fact as written:** a note that links the same target twice with the same predicate gets one row. Explicit relations are inserted before inline links with `ON CONFLICT DO NOTHING`, so the explicit row wins.
+- **One row per link key:** a note that links the same target twice with the same predicate gets one row, even when the spelling differs (`[[Caching]]`, `[[caching]]`). Explicit relations are inserted before inline links with `ON CONFLICT DO NOTHING`, so the explicit row wins, and the first spelling written is kept.
 - **Both directions are kept:** `A has_part B` and `B part_of A` are two rows, because `load_bootstrap()` needs links exactly as written. Graph queries treat such an inverse pair as one fact.
 
 ---
@@ -286,12 +290,12 @@ Surfaces unwritten notes ranked by inbound reference count:
 
 ```sql
 SELECT
-    e.target_ref,
+    MIN(e.target_ref) AS name,                 -- One spelling, for display
     COUNT(*) AS mention_count,
     GROUP_CONCAT(DISTINCT e.predicate) AS predicates
 FROM edges e
 WHERE e.target_key IS NULL
-GROUP BY e.target_ref
+GROUP BY e.ref_key                             -- [[Gall's law]] and [[Gall's Law]] are one ghost
 ORDER BY mention_count DESC;
 ```
 

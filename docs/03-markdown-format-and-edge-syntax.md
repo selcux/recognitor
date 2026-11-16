@@ -160,7 +160,9 @@ Recognitor follows the Obsidian model: a note's address is its path ([07-interfa
 
 ### Links: resolved to a note id
 
-Wikilinks name a note by title (`[[ADHD profile]]`), by filename, by path, or with a namespace prefix (`[[cognition::index]]`). The engine resolves each one to a note id in this order. Matching uses lowercase keys (above), and a "name" is a note's title or its filename without `.md`:
+Wikilinks name a note by title (`[[ADHD profile]]`), by filename, by path, or with a namespace prefix (`[[cognition::index]]`). The engine resolves each one to a note id in this order. Matching uses lowercase keys (above), and a "name" is a note's title or its filename without `.md`.
+
+A link's **key** is the link lowercased, without its alias, heading or `.md`, with `%20` decoded. A relative path becomes the full path from the vault root: `../guides/Setup.md` written in `common/notes/` becomes `common/guides/setup`. The key is stored next to the link as written, and resolution reads only the key:
 
 1. **Exact path:** `[[common/working-style/ADHD profile]]` matches a note id, with or without `.md`. Explicit relative paths (`[[./same.md]]`, `[[../guides/Setup.md]]`) resolve relative to the linking note, to that exact file only.
 2. **Prefixed name:** `[[ns::Name]]` matches a name inside namespace `ns`.
@@ -172,8 +174,9 @@ Filename matching matters for Obsidian, which links by filename even when the fr
 
 ### Re-resolution and ghosts
 
-- **Raw text is kept:** `edges.target_ref` stores the link exactly as written, so it can be resolved again later.
-- **Ghosts heal:** after every sync that adds, removes, or retitles a note, all links are re-resolved. A link written before its target existed resolves once the target is created, wherever it lands (`backend/specs/security-architecture`, not only a guessed `backend/security-architecture`).
+- **Both forms are kept:** `edges.target_ref` stores the link exactly as written, for output. `edges.ref_key` stores its key, so the link can be resolved again without reading the file.
+- **A saved note's own links** are resolved when it is saved.
+- **Ghosts heal:** after a note is added, removed, renamed or retitled, the engine re-resolves the links whose key matches one of that note's names, old and new: its id, its title and its filename, the last two also with the namespace prefix (`ns::name`). Each lookup uses an index, so a write never re-checks every link in the vault. A link written before its target existed resolves once the target is created, wherever it lands (`backend/specs/security-architecture`, not only a guessed `backend/security-architecture`).
 - **Deletes revert to ghosts:** links to a deleted note return to `target_key = NULL` and show up in the ghost backlog.
 - **Title renames:** links that use the old title become ghosts and show up in the ghost backlog, unless the filename still matches.
 - **File moves:** a move breaks path-style links (`[[ideas/caching]]`) to the moved note. A name link keeps resolving through steps 3 and 4, unless the move makes the name ambiguous. A move made outside Recognitor shows up in the sweep as a deleted and a created file with the same checksum, and is reported as a probable move ([07-interface-contracts.md §6.2](07-interface-contracts.md#62-moves-outside-recognitor)).
@@ -198,8 +201,8 @@ To prevent LLM context bloat, Recognitor separates graph discovery from note rea
          checksum = excluded.checksum, mtime = excluded.mtime, size = excluded.size;
 
      -- Edges projection: explicit relations first, then inline links
-     INSERT INTO edges (source_key, predicate, target_ref, is_inline, position, context)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+     INSERT INTO edges (source_key, predicate, target_ref, ref_key, is_inline, position, context)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
      ON CONFLICT DO NOTHING;
      -- target_key is filled by the resolution pass (§4)
      ```
