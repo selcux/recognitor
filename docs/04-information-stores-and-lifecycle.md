@@ -77,6 +77,8 @@ The bootstrap is loaded as a tree, starting from `index.md` and following links 
 
 - **Budget:** the payload size is measured on every load. Above the configured `bootstrap.max_tokens`, the result carries a warning. There are no fixed per-section token targets.
 - **CLI twin:** `recognitor bootstrap` prints the same payload, for harness hooks (§5.1). `recognitor bootstrap --list` prints which notes load, in order, without their content.
+- **No entry point:** when `bootstrap/index.md` is not found (missing, or left out as a case twin), the tool returns one error line instead of the payload: ``error: bootstrap/index.md not found. Run `recognitor lint`.`` `recognitor bootstrap` prints the same line and exits with a non-zero code, so the session-start hook sees the failure. `lint` names the cause.
+- **Ghost links in the tree:** the payload ends with one line listing them: `not loaded: behavior/personas/Mentor (not written yet)`. Without ghosts, the line is left out.
 
 ### 2.3 Writes
 
