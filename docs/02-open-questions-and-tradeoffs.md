@@ -139,7 +139,7 @@ Resolved in favor of lightweight **Structural Linting** plus optional **vault-wi
 
 Resolved in [07-interface-contracts.md](07-interface-contracts.md): a stateless server, MCP tools for every-session agent work, and a CLI limited to what a human cannot do by hand.
 - **MCP:** `load_bootstrap`, `load_namespace`, `search`, `context`, `read_note`, `write_note`, `edit_note`, `move_note`, `relink`, `delete_note`.
-- **CLI:** `bootstrap [--list]`, `search`, `context`, `read`, `move`, `ghosts`, `lint [--strict]`, `trash empty`, `sync`, `rebuild`, `config get/set`. No write or edit commands: humans edit the files directly.
+- **CLI:** `bootstrap [--list]`, `search`, `context`, `read`, `move`, `relink`, `ghosts`, `lint [--strict]`, `trash empty`, `sync`, `rebuild`, `config get/set`. No write or edit commands: humans edit the files directly.
 - **Rejected:** a raw-SQL `query` command, a `--json` output flag, and `ghosts` as an MCP tool.
 - **Order (DR1-15):** every schema change must now be justified by a contract in doc 07.
 

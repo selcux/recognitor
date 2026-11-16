@@ -39,7 +39,7 @@ A note's store comes from its namespace: `bootstrap`, `archive`, or any other na
 | Surface | Tools / commands |
 | :--- | :--- |
 | **MCP** | `load_bootstrap`, `load_namespace`, `search`, `context`, `read_note`, `write_note`, `edit_note`, `move_note`, `relink`, `delete_note` |
-| **CLI** | `bootstrap [--list]`, `search`, `context`, `read`, `move`, `ghosts`, `trash empty`, `sync`, `rebuild`, `lint [--strict]`, `config get/set` |
+| **CLI** | `bootstrap [--list]`, `search`, `context`, `read`, `move`, `relink`, `ghosts`, `trash empty`, `sync`, `rebuild`, `lint [--strict]`, `config get/set` |
 
 - **CLI-only:** `ghosts` (backlog gardening is a human job, not an agent job).
 - **Rejected: a `query` command for raw SQL.** The schema is a disposable projection that changes without migrations; exposing raw SQL would turn it into an API people depend on.
@@ -180,6 +180,16 @@ An MCP tool cannot pause mid-call to ask the user, so a move takes two calls:
 3. `relink(old, new, notes)` rewrites the chosen links. Each rewrite is a guarded edit of the linking note (§5).
 
 - **CLI:** `recognitor move` asks the user directly and does both steps in one command.
+- **Broken means changed by the move, whatever the link looks like:** under the write lock, `move_note` resolves the affected links before and after the move: the links whose key matches one of the note's names, and the note's own links. It reports every link whose target changed or became a ghost:
+
+| Link | Breaks because |
+| :--- | :--- |
+| `[[ideas/caching]]` | The path changed |
+| `[[ideas::Caching]]` | The namespace changed |
+| `[[Caching]]` | The name now matches two notes |
+| `[[./Setup]]` inside the moved note | It now starts from the new folder |
+
+- **Links inside the moved note** are fixed with `edit_note` (`find_replace`), because `relink` rewrites only links that point to the moved note.
 
 **`relink` never rejects.** Each linking note is handled on its own. Rewriting a link replaces only the link text, so it cannot overwrite anyone's work and needs no checksum:
 
@@ -192,12 +202,20 @@ An MCP tool cannot pause mid-call to ask the user, so a move takes two calls:
 relinked: 4
 warning: skipped, link already gone: recognitor/Sync design
 ```
-- **Links by title survive:** `[[Caching]]` keeps resolving after a move. Only path-style links such as `[[ideas/caching]]` break, so the list is usually short.
+- **Links by name usually survive:** `[[Caching]]` keeps resolving after a move unless the name now matches two notes, so the list is usually short.
 - **Unchosen links** become ghosts and show up in `recognitor ghosts`.
 
 ### 6.2 Moves Outside Recognitor
 
-A move in Obsidian, Explorer or git looks to the sweep like one file deleted and one file created. When both have the same checksum, the sweep reports a probable move, lists the links it broke, and points the user to `relink`.
+A move in Obsidian, Explorer or git looks to the sweep like one file deleted and one file created. The sweep does not report it: the sweep usually runs inside another tool call, whose output has no place for the report. The links the move broke become ghosts instead, and `recognitor ghosts` shows where the note probably went:
+
+```
+ideas/caching   3 links   → maybe moved to design/Caching
+Gall's law      2 links
+```
+
+- **The hint** is worked out when the command runs, so nothing is stored. It shows only when exactly one note has the ghost's filename (`notes.name_key`); for a shared name such as `index`, it shows nothing.
+- **Fix:** `recognitor relink` on the CLI, or `relink` through an agent (§6.1).
 
 ---
 
@@ -317,7 +335,7 @@ Both are built from the rules above; no new decisions.
 | **Input** | `path` from the vault root (`.md` optional), `content` (the whole file, frontmatter included), optional `expected_checksum` | `note`, `new_path`, `expected_checksum` |
 | **Without checksum** | Create only; rejected if the note exists (§5.2) | Not allowed |
 | **Refused when** | The key already exists (§6), or the path has no top-level folder | The target's key already exists, unless it is the note's own key: a case-only rename is allowed and breaks no links (§6). Also when `new_path` has no top-level folder |
-| **Output** | `<id>  checksum: <12 hex>` | The new id, and the path-style links that broke, with the `relink` call that fixes them (§6.1) |
+| **Output** | `<id>  checksum: <12 hex>` | The new id, and every link the move broke, with the `relink` call that fixes them (§6.1) |
 | **Folders** | Created as needed; existing folders keep their spelling (§6) | Created as needed; existing folders keep their spelling (§6) |
 
 - **Stores:** the bootstrap notice and the archive limits follow §1.1.
@@ -331,7 +349,7 @@ The CLI has no `write`, `edit` or `delete` commands. A human edits notes in an e
 | Command | Why it exists |
 | :--- | :--- |
 | `bootstrap [--list]`, `search`, `context`, `read` | Inspect what agents see; the session-start hook runs `bootstrap` ([04-information-stores-and-lifecycle.md §5.1](04-information-stores-and-lifecycle.md)) |
-| `move` | A move needs the link check and `relink` (§6.1) |
+| `move`, `relink` | A move needs the link check and `relink` (§6.1); a move made outside Recognitor needs `relink` alone (§6.2) |
 | `ghosts`, `lint [--strict]`, `trash empty` | Maintenance |
 | `sync`, `rebuild`, `config get/set` | Engine control |
 

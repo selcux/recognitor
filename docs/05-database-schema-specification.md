@@ -299,6 +299,8 @@ GROUP BY e.ref_key                             -- [[Gall's law]] and [[Gall's La
 ORDER BY mention_count DESC;
 ```
 
+The "maybe moved to" hint ([07-interface-contracts.md §6.2](07-interface-contracts.md#62-moves-outside-recognitor)) looks up the last part of each ghost's `ref_key` (after the last `/` or `::`) in `notes.name_key`, and shows a hint only when exactly one note matches.
+
 ### 3.6 Hybrid Semantic and Metadata Search
 Finds semantically similar notes across the whole vault (optional feature). The namespace is a ranking perspective, not a filter ([07-interface-contracts.md §4.1](07-interface-contracts.md#41-ranking)), so the only filter is the archive rule ([07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access)). It sits on a `vec0` metadata column, so it applies during the search, not after it (DR1-05). When `ns` is `archive`, the query runs without the archive line; a plain `!=` keeps the filter inside the nearest-neighbor search. The query fetches more candidates than a result page holds, because the `ns` boost reorders them afterwards:
 
