@@ -156,13 +156,14 @@ The rejection never repeats the agent's own request: the agent already has it in
 Recognitor follows the Obsidian model: a note's address is its path. It replaced the earlier permalink identity on 2026-11-15; resolution rules are in [03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution).
 
 - **Id = path:** a note's id is its path from the vault root without `.md` (`common/working-style/ADHD profile`). Output always shows it as written. The database stores its lowercase **key** instead ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)), and no output shows the key. Both come from the path, never from frontmatter, with no slug conversion, so nothing can drift, and Obsidian path links match without conversion.
-- **Kept as written, matched in lowercase:** links, tool arguments and namespaces match a lowercase key of the path, as Windows, macOS and Obsidian do ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)).
+- **Kept as written, matched in lowercase:** links, tool arguments and namespaces match a lowercase key of the path ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)).
+- **ASCII names only:** every file and folder name is ASCII, so a key means the same on every platform. A non-ASCII name is handled like a case twin in the table below.
 - **No case twins:** two paths with the same key are an error at any level, folders included (`common/ADHD profile.md` and `common/adhd profile.md`; `Baseline/` and `baseline/`). The same name in different folders is fine (every namespace has an `index.md`).
 
-| Where | What happens with a case twin |
+| Where | What happens with a case twin or a non-ASCII name |
 | :--- | :--- |
-| `write_note`, `move_note` | Refused when the key already exists; the error returns the existing note. A new path reuses the spelling of folders that already exist (`Baseline/x.md` lands in `baseline/`) |
-| Files created outside Recognitor (Linux, git) | One or none: none of the twins is indexed. `sync` and `rebuild` print an error naming every twin, and `lint` fails. Twin folders leave out every note under both. The files stay on disk, and the first sweep after a rename indexes them |
+| `write_note`, `move_note` | Refused when the key already exists; the error returns the existing note. Refused when the path has a non-ASCII character. A new path reuses the spelling of folders that already exist (`Baseline/x.md` lands in `baseline/`) |
+| Files created outside Recognitor (Linux, git) | One or none: none of the twins is indexed. `sync` and `rebuild` print an error naming every twin, and `lint` fails. Twin folders leave out every note under both. A non-ASCII name is left out and reported the same way. The files stay on disk, and the first sweep after a rename indexes them |
 | A read, an edit or a link that hits the name | Treated as a note that does not exist: "not found", or a plain ghost. Twins never enter the system and nothing records them |
 | A create or a move onto the name | Refused, with the path of every twin: the check reads the disk, not the index (§5.1 step 2) |
 
@@ -354,7 +355,7 @@ Both are built from the rules above; no new decisions.
 | :--- | :--- | :--- |
 | **Input** | `path` from the vault root (`.md` optional), `content` (the whole file, frontmatter included), optional `expected_checksum` | `note`, `new_path`, `expected_checksum` |
 | **Without checksum** | Create only; rejected if the note exists (§5.2) | Not allowed |
-| **Refused when** | The key already exists (§6), or the path has no top-level folder | The target's key already exists, unless it is the note's own key: a case-only rename is allowed and breaks no links (§6). Also when `new_path` has no top-level folder |
+| **Refused when** | The key already exists (§6), the path has no top-level folder, or the path has a non-ASCII character (§6) | The target's key already exists, unless it is the note's own key: a case-only rename is allowed and breaks no links (§6). Also when `new_path` has no top-level folder or a non-ASCII character |
 | **Output** | `<id>  checksum: <12 hex>` | The new id, and every link the move broke, with the `relink` call that fixes them (§6.1) |
 | **Folders** | Created as needed; existing folders keep their spelling (§6) | Created as needed; existing folders keep their spelling (§6) |
 

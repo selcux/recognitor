@@ -48,7 +48,7 @@ CREATE INDEX idx_notes_name ON notes(name_key);    -- Link resolution by filenam
 
 - **Names are keys:** `key`, `namespace`, `title_key` and `name_key` hold lowercase keys made in Rust with Unicode lowercasing ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)). Query parameters are lowercased the same way before they reach SQL. `COLLATE NOCASE` is never used for names, because it folds only A to Z.
 - **Spelling lives in `path` and `title`:** output, and opening the file, use them. A case-only rename keeps `key` and updates `path` (§4.2), so edges and observations are untouched.
-- **Case twins never reach the database:** files that share a key are left out, and nothing records them. The sweep finds them again in the file list each time and reports them until one is renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
+- **Case twins and non-ASCII names never reach the database:** files that share a key, or whose path has a non-ASCII character, are left out, and nothing records them. So `key`, `namespace` and `name_key` are always ASCII. The sweep finds them again in the file list each time and reports them until one is renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
 
 ---
 
