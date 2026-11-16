@@ -1,0 +1,25 @@
+[package]
+name = "recognitor"
+version = "0.1.0"
+edition = "2024"
+description = "Local-first Markdown memory engine for LLMs, with SQLite as a disposable projection"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "recognitor"
+path = "src/main.rs"
+
+[dependencies]
+directories = "6.0.0"
+pulldown-cmark = { version = "0.13.6", default-features = false }
+rusqlite = { version = "0.43", features = ["bundled"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
