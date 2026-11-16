@@ -54,7 +54,7 @@ Recognitor adopts a **Single Unified Graph with Logical Namespaces** powered by 
 2. **Edges:** Typed relational edges connecting nodes across namespaces. Weights are computed at query time, never authored ([02-open-questions-and-tradeoffs.md §6](02-open-questions-and-tradeoffs.md)).
 3. **Namespaces as Perspective:**
    - **Entry Point:** An agent enters the knowledge base through a namespace's `index.md` and passes that namespace to searches, which rank its notes higher without filtering out the rest.
-   - **No Boundaries:** Searches and graph walks span the whole vault; the LLM decides when to follow links into other namespaces ([07-interface-contracts.md §1](07-interface-contracts.md#1-principles)).
+   - **No Boundaries:** Searches and graph walks span every knowledge namespace, and bootstrap and archive follow the store access rules ([07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access)); the LLM decides when to follow links into other namespaces ([07-interface-contracts.md §1](07-interface-contracts.md#1-principles)).
 
 ---
 

@@ -59,7 +59,7 @@ Resolved in favor of **deterministic on-demand reconciliation with a 2-second TT
 | **Single writer** | The sweep runs inside `BEGIN IMMEDIATE` with WAL mode and `busy_timeout`. | Concurrent processes queue instead of indexing the same files twice. |
 | **Write-through** | MCP write tools update the file and the index in the same call. | A search inside the 2-second window still sees the agent's own write. |
 | **Optimistic concurrency** | Each edit checks the part it overwrites and, on a mismatch, is refused with the current version of that part. The check and the write run under SQLite's write lock. Full rules in [07-interface-contracts.md §5](07-interface-contracts.md#5-writes-and-conflicts). | Neither another agent nor a human editing in Obsidian loses work silently. |
-| **Atomic file writes** | Write to a temporary file in the same directory, then rename over the target. | Editors and sync tools never see a half-written note. |
+| **Atomic file writes** | Write to a temporary file in the same directory, then rename over the target; creates and moves use a rename that cannot replace ([07-interface-contracts.md §5.1](07-interface-contracts.md#51-the-write-lock)). | Editors and sync tools never see a half-written note. |
 | **Surgical edits** | Edits patch byte ranges taken from the parser's source offsets (`pulldown-cmark` offset iterator). Markdown is never regenerated from the parse tree. | Re-serializing a parse tree rewrites formatting the human chose. |
 | **Database location** | Per-user OS cache directory, one database per vault, never inside the vault. | See [05-database-schema-specification.md §5](05-database-schema-specification.md#5-database-file-location). |
 
@@ -108,6 +108,8 @@ Resolved in favor of lightweight **Structural Linting** plus optional **vault-wi
   7. Every file and folder name is ASCII, and no two paths share a lowercase key (case twins). Both are errors, and the files are not indexed.
   8. Spelling: an entry point not spelled `index.md`, and a Markdown link whose case differs from the file's, get a warning.
   9. Every namespace has an `index.md`; a namespace without one gets a warning.
+
+  Hint, never an error, even with `--strict`: the vault has no `bootstrap/` folder. That is a valid setup, but `load_bootstrap` then returns an error.
 
   Syntax rules: [03-markdown-format-and-edge-syntax.md](03-markdown-format-and-edge-syntax.md).
 - **Ingestion Tolerance:** Invalid files trigger non-fatal diagnostic warnings during SQLite indexing rather than halting parsing or dropping notes from search. The exceptions are names: a non-ASCII name is not indexed, and neither are case twins, because indexing one would guess which file the user meant and indexing both would break link resolution. Both stay out until renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).

@@ -123,7 +123,7 @@ Follow [the deploy checklist](../ops/Deploy%20Checklist.md) before release.
 
 - Paths resolve relative to the linking note. A leading `/` means the **vault root**, so a Markdown link can cross namespaces.
 - Percent-encoding is decoded; `#fragments` and query strings do not change the target.
-- Exact files only: no title lookup and no added `.md`. A link to a file that does not exist yet stays a ghost until it does.
+- Exact files only: no title lookup. A link to a file that does not exist yet stays a ghost until it does.
 - Case does not count (§4), as in Obsidian and on Windows and macOS. `lint` warns when a link's case differs from the file's spelling, because GitHub and Linux tools need the exact case.
 - Ignored: external URLs, `mailto:` and `file:` links, images, fragment-only links (`#section`), and paths that leave the vault.
 - Markdown links are always `links_to`; typed relations use wikilinks under `## Relations`.
@@ -163,7 +163,7 @@ Recognitor follows the Obsidian model: a note's address is its path ([07-interfa
 
 Wikilinks name a note by title (`[[ADHD profile]]`), by filename, by path, or with a namespace prefix (`[[cognition::index]]`). The engine resolves each one to a note id in this order. Matching uses lowercase keys (above), and a "name" is a note's title or its filename without `.md`.
 
-A link's **key** is the link lowercased, without its alias, heading or `.md`, with `%20` decoded. A relative path becomes the full path from the vault root: `../guides/Setup.md` written in `common/notes/` becomes `common/guides/setup`. The key is stored next to the link as written, and resolution reads only the key:
+A link's **key** is the link lowercased, without its alias, heading or `.md`, with percent-encoding decoded (§3). A relative path becomes the full path from the vault root: `../guides/Setup.md` written in `common/notes/` becomes `common/guides/setup`. The key is stored next to the link as written, and resolution reads only the key:
 
 1. **Exact path:** `[[common/working-style/ADHD profile]]` matches a note id, with or without `.md`. Explicit relative paths (`[[./same.md]]`, `[[../guides/Setup.md]]`) resolve relative to the linking note, to that exact file only.
 2. **Prefixed name:** `[[ns::Name]]` matches a name inside namespace `ns`.
@@ -198,12 +198,5 @@ To prevent LLM context bloat, Recognitor separates graph discovery from note rea
    - **Stage 2 (Hydration):** The agent only fetches the complete Markdown body via `read_note(id)` for the specific nodes deemed necessary.
 
 3. **Bidirectional Graph Queries:**
-   - The SQLite index supports immediate incoming and outgoing queries:
-     ```sql
-     -- Outgoing edges
-     SELECT predicate, target_ref, target_key FROM edges WHERE source_key = ?;
-
-     -- Incoming backlinks
-     SELECT predicate, source_key FROM edges WHERE target_key = ?;
-     ```
+   - The SQLite index answers both directions. Queries: [05-database-schema-specification.md §3.3](05-database-schema-specification.md#33-two-stage-graph-discovery) (links out) and [§3.4](05-database-schema-specification.md#34-backlink-discovery-incoming-references) (links in).
    - Neither the user nor the agent ever writes reciprocal backlinks into source Markdown files.

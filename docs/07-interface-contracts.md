@@ -9,7 +9,7 @@ This document defines every MCP tool and CLI command: its inputs, its output, it
 ## 1. Principles
 
 - **Stateless server:** the MCP server and the CLI keep no session state. Each call carries everything it needs. Parallel agents working from different namespaces share the database, never server state.
-- **Namespace = entry point and perspective:** a namespace is where an agent enters the knowledge base and the angle it reads it from. It is not a boundary. Searches and graph walks span the whole vault, and the LLM decides when to follow links into other namespaces.
+- **Namespace = entry point and perspective:** a namespace is where an agent enters the knowledge base and the angle it reads it from. It is not a boundary. Searches and graph walks span every knowledge namespace, and bootstrap and archive follow §1.1. The LLM decides when to follow links into other namespaces.
 - **No isolation in early versions:** the per-session allowlist and sealed namespaces from DR1-07 are dropped. They can return later if real use shows a need.
 - **MCP for every-session work, CLI for maintenance:** every MCP tool's schema costs context tokens in every session, so tools agents rarely need are CLI-only.
 - **Plain text output:** tools return Markdown text. There is no JSON output mode.
@@ -114,7 +114,7 @@ Several agents and the CLI can write to the same vault at the same time. These r
 SQLite protects its own data, but the notes are plain files outside it. Every write tool therefore uses SQLite's write lock as a lock between processes, explicitly:
 
 1. `BEGIN IMMEDIATE`: take the write lock now. Other writers wait, up to `busy_timeout`.
-2. Read the target file **from disk** and hash it. Never trust the index: a human may have edited the file inside the 2-second sync window. A create or a move instead reads each folder on the target path from disk and compares every name in it by key (§6). Any match refuses, even a file the index does not know yet, and even case twins.
+2. Read the target file **from disk** and hash it. Never trust the index: a human may have edited the file inside the 2-second sync window. A create or a move instead reads each folder on the target path from disk and compares every name in it by key (§6). Any match on the last name refuses, even a file the index does not know yet, unless it is the note's own key (a case-only rename, §11). A folder that matches is reused with its spelling; twin folders refuse (§6).
 3. Check the edit's guard (§5.2). On a mismatch: `ROLLBACK` and return the rejection (§5.3).
 4. Apply the edit to the disk bytes, write a temporary file, rename it over the note. A create or a move uses a rename that fails when the target exists, so a file a human saves after step 2 is never overwritten.
 5. Update the index rows, `COMMIT`.
@@ -176,7 +176,7 @@ Recognitor follows the Obsidian model: a note's address is its path. It replaced
 
 An MCP tool cannot pause mid-call to ask the user, so a move takes two calls:
 
-1. `move_note(note, new_path)` moves the file and returns the links that are now broken.
+1. `move_note(note, new_path, expected_checksum)` moves the file and returns the links that are now broken.
 2. The agent shows the list to the user, who picks which links to update.
 3. `relink(old, new, notes)` rewrites the chosen links. Each rewrite is a guarded edit of the linking note (§5).
 
@@ -220,7 +220,7 @@ Gall's law      2 links
 
 ### 6.3 Notes Named in Tool Calls
 
-A tool argument that names a note (`read_note`, `context`, `edit_note`, `move_note`, `relink`, `delete_note`) accepts an id, a path or a link name, matched by key. It resolves like a link ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)), but with steps 1, 2 and 4 only: a tool call has no linking note, so step 3 has no namespace to prefer.
+A tool argument that names a note (`read_note`, `context`, `edit_note`, `move_note`, `delete_note`, and `relink`'s `new` and `notes`; its `old` is the old id, which no note has any more) accepts an id, a path or a link name, matched by key. It resolves like a link ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)), but with steps 1, 2 and 4 only: a tool call has no linking note, so step 3 has no namespace to prefer.
 
 | Matches | Result |
 | :--- | :--- |
@@ -232,7 +232,7 @@ A tool argument that names a note (`read_note`, `context`, `edit_note`, `move_no
 read_note("index")
 → "index" matches 3 notes. Call again with one id:
   common/index
-  compass/index
+  compass/Index
   baseline/index
 ```
 
@@ -356,7 +356,7 @@ Both are built from the rules above; no new decisions.
 | **Input** | `path` from the vault root (`.md` optional), `content` (the whole file, frontmatter included), optional `expected_checksum` | `note`, `new_path`, `expected_checksum` |
 | **Without checksum** | Create only; rejected if the note exists (§5.2) | Not allowed |
 | **Refused when** | The key already exists (§6), the path has no top-level folder, or the path has a non-ASCII character (§6) | The target's key already exists, unless it is the note's own key: a case-only rename is allowed and breaks no links (§6). Also when `new_path` has no top-level folder or a non-ASCII character |
-| **Output** | `<id>  checksum: <12 hex>` | The new id, and every link the move broke, with the `relink` call that fixes them (§6.1) |
+| **Output** | `<id>  checksum: <12 hex>` | The new id, and every link the move broke, with the `relink` call for links into the note; links inside it are fixed with `edit_note` (§6.1) |
 | **Folders** | Created as needed; existing folders keep their spelling (§6) | Created as needed; existing folders keep their spelling (§6) |
 
 - **Stores:** the bootstrap notice and the archive limits follow §1.1.

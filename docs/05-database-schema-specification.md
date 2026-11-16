@@ -48,7 +48,7 @@ CREATE INDEX idx_notes_name ON notes(name_key);    -- Link resolution by filenam
 
 - **Names are keys:** `key`, `namespace`, `title_key` and `name_key` hold lowercase keys made in Rust with Unicode lowercasing ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)). Query parameters are lowercased the same way before they reach SQL. `COLLATE NOCASE` is never used for names, because it folds only A to Z.
 - **Spelling lives in `path` and `title`:** output, and opening the file, use them. A case-only rename keeps `key` and updates `path` (§4.2), so edges and observations are untouched.
-- **Case twins and non-ASCII names never reach the database:** files that share a key, or whose path has a non-ASCII character, are left out, and nothing records them. So `key`, `namespace` and `name_key` are always ASCII. The sweep finds them again in the file list each time and reports them until one is renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
+- **Case twins and non-ASCII names never reach the database:** files that share a key, or whose path has a non-ASCII character, are left out, and nothing records them. So `key`, `namespace` and `name_key` are always ASCII. The sweep finds them again in the file list each time, and `sync`, `rebuild` and `lint` report them until they are renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
 
 ---
 
@@ -226,13 +226,13 @@ CREATE TABLE meta (
 The walk itself runs in Rust with a visited set, depth-first from `bootstrap/index.md` ([04-information-stores-and-lifecycle.md §2.2](04-information-stores-and-lifecycle.md)). A recursive SQL query cannot keep one visited set across branches. Each step asks for a note's outgoing links in written order:
 
 ```sql
-SELECT e.target_key
+SELECT e.target_key, e.target_ref                          -- target_key NULL = ghost, for the "not loaded" line
 FROM edges e
-JOIN notes n ON n.key = e.target_key
+LEFT JOIN notes n ON n.key = e.target_key
 WHERE e.source_key = ?1
-  AND e.is_inline = 0                          -- ## Relations links only
-  AND e.predicate != 'supersedes'              -- never load a retired version
-  AND n.namespace = 'bootstrap'                -- never leave the bootstrap; ghosts drop out of the JOIN
+  AND e.is_inline = 0                                      -- ## Relations links only
+  AND e.predicate != 'supersedes'                          -- never load a retired version
+  AND (n.namespace = 'bootstrap' OR e.target_key IS NULL)  -- never leave the bootstrap
 ORDER BY e.position;
 ```
 

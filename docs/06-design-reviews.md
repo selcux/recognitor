@@ -15,8 +15,175 @@ This document is the running log of design and architecture reviews for Recognit
 
 | Id | Date | Scope | Baseline commit | Score | Findings |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| [DR3](#dr3-2026-11-16-closing-review-docs-01-07) | 2026-11-16 | Closing review, docs 01-07 | `2a4d895` | 8/10 | 6 resolved |
 | [DR2](#dr2-2026-11-16-alignment-review-docs-01-07) | 2026-11-16 | Alignment review, docs 01-07 | `8512d2b` | 7/10 | 13 resolved |
 | [DR1](#dr1-2026-11-14-full-design-review-docs-01-05) | 2026-11-14 | Full design review, docs 01-05 | `9db3af1` | 6/10 | 16 resolved, closed 2026-11-15 |
+
+---
+
+## DR3: 2026-11-16, closing review (docs 01-07)
+
+**Score: 8/10.** Every DR2 fix landed where its rule lives. In four places a second copy still carries the old form, and two of those copies contradict the fix.
+
+No finding is Critical or High. Every finding is a second place that disagrees with the main rule. Scope, set by the user: only missing or incomplete DR2 fixes, contradictions, and rules that cannot be built as written. Each fix is the smallest edit to the existing text.
+
+---
+
+### What's solid (keep it)
+
+| Decision | Why it holds up |
+|---|---|
+| Store access table (doc 07 §1.1) | It is the one home for store rules, and doc 02 §5, doc 04 §1-4 and doc 05 §1, §3.6, §3.7 link to it. The full-text query handles a search with no `ns` correctly: `?2` is NULL, so `FALSE OR NULL` drops archive rows. |
+| `ref_key` and `name_key` | Ghost grouping and targeted re-resolution each have an index: `idx_edges_ref`, `idx_notes_name`, and `idx_notes_title` on `title_key` alone. |
+| Tool arguments resolve by steps 1, 2, 4 (doc 07 §6.3) | The "several matches" path is the common case, and it is specified. In the real vault, `index` exists in `common` (`index.md`), `compass` (`Index.md`) and `recognitor` (`index.md`). |
+| No custom bootstrap directory | `bootstrap-dir`, `bootstrap_root` and "custom bootstrap" appear only in the two sentences that reject them (doc 02 §10, doc 04 §2.1). |
+| ASCII-only names | The same rule with the same wording in doc 02 §8, doc 03 §4, doc 05 §2.1 and doc 07 §6, §11. |
+
+**DR2 re-check:**
+
+| DR2 | Now | Gap |
+|---|---|---|
+| 01 id and key | Holds in docs 05 and 07, leftover elsewhere | doc 03 §5 SQL (DR3-04); doc 07 §6.3 example (DR3-06) |
+| 02 store rules | Holds, leftover elsewhere | "whole vault" in doc 01 §3 and doc 07 §1 (DR3-06) |
+| 03 create guard | Partial | doc 07 §5.1 step 2 (DR3-01); doc 02 §4 (DR3-06) |
+| 04 bootstrap notice | Holds | |
+| 05 link keys | Holds, leftover elsewhere | doc 03 §3 vs §4 (DR3-05) |
+| 06 one upsert | Holds | |
+| 07 root files | Holds, leftover elsewhere | doc 04 §1 rule box (DR3-06) |
+| 08 bootstrap failure | Partial | doc 05 §3.1 (DR3-02); lint list (DR3-03) |
+| 09 move reports | Holds, leftover elsewhere | doc 07 §6.1 and §11 (DR3-06) |
+| 10 tool arguments | Holds, leftover elsewhere | `relink` `old` (DR3-06) |
+| 11 fixed bootstrap | Holds | |
+| 12 ASCII names | Holds, leftover elsewhere | doc 05 §2.1 "the sweep reports" (DR3-06) |
+| 13 stale statements | Holds | |
+
+That is 4 that hold, 7 that hold with a leftover elsewhere, and 2 that are partial. Under log rule 3 the DR2 statuses stay `Resolved`, and the DR3 tracker carries the gaps.
+
+**DR1 re-check:** I spot-checked against the current text and found no regression. Two DR1 tracker cells are stale (DR3-06).
+
+---
+
+### Medium priority
+
+#### 1. The create guard, as written, refuses every existing folder and every case-only rename (DR2-03, partial)
+
+| Doc 07 | Says |
+|---|---|
+| §5.1 step 2 | "A create or a move instead reads each folder on the target path from disk and compares every name in it by key (§6). Any match refuses, even a file the index does not know yet, and even case twins." |
+| §6, table row 1 | "A new path reuses the spelling of folders that already exist (`Baseline/x.md` lands in `baseline/`)" |
+| §11, `move_note` | Refused when the target's key exists, "unless it is the note's own key: a case-only rename is allowed" |
+
+Taken literally, `write_note("baseline/New.md")` in the test vault reads the vault root, finds `baseline` and refuses. A case-only rename finds the note itself and refuses. The code is built from step 2, so the coder has to guess which rule wins.
+
+Fix, doc 07 §5.1 step 2, replace the last sentence:
+
+```
+Any match on the last name refuses, even a file the index does not know yet, unless it is the
+note's own key (a case-only rename, §11). A folder that matches is reused with its spelling;
+twin folders refuse (§6).
+```
+
+#### 2. The bootstrap walk query drops the ghosts the payload must list (DR2-08, partial)
+
+| Doc | Says |
+|---|---|
+| doc 04 §2.2 | "Ghost links in the tree: the payload ends with one line listing them" |
+| doc 05 §3.1 | `JOIN notes n ...` with the comment "ghosts drop out of the JOIN"; it selects `e.target_key` only |
+
+If the walk is built from doc 05, it never sees a ghost, so the "not loaded" line is always empty. Fix, doc 05 §3.1 (same filters, ghosts kept):
+
+```sql
+SELECT e.target_key, e.target_ref                          -- target_key NULL = ghost, for the "not loaded" line
+FROM edges e
+LEFT JOIN notes n ON n.key = e.target_key
+WHERE e.source_key = ?1
+  AND e.is_inline = 0                                      -- ## Relations links only
+  AND e.predicate != 'supersedes'                          -- never load a retired version
+  AND (n.namespace = 'bootstrap' OR e.target_key IS NULL)  -- never leave the bootstrap
+ORDER BY e.position;
+```
+
+#### 3. No lint check covers a missing `bootstrap/` folder (DR2-08, partial)
+
+Doc 04 §2.2 says the error line ends with "Run `recognitor lint`" and that "`lint` names the cause". Doc 02 §8 lists every lint check:
+
+- Check 7 covers twins.
+- Check 9 covers a namespace without `index.md`.
+- Nothing covers a vault with no `bootstrap/` folder. In that case there is no `bootstrap` namespace for check 9 to look at.
+
+Evidence: the test vault (`C:\Users\selcuk\agent-pkm`) has `baseline/` and `compass/` and no `bootstrap/`. Today `recognitor bootstrap` would print the error and exit non-zero, then send the user to a command whose nine checks say nothing about it.
+
+Fix, doc 02 §8 check 9: "Every namespace has an `index.md`, and the vault has `bootstrap/index.md`; a missing one gets a warning."
+
+#### 4. Doc 03 §5 keeps an old copy of the `context` queries (DR2-01 leftover)
+
+Doc 03 §5, item 3:
+
+```sql
+SELECT predicate, target_ref, target_key FROM edges WHERE source_key = ?;
+SELECT predicate, source_key FROM edges WHERE target_key = ?;
+```
+
+| Point | doc 03 §5 | doc 05 §3.3, §3.4 and doc 07 §8 |
+|---|---|---|
+| Output | Keys (`target_key`, `source_key`) | `n.path`. Doc 07 §6: "no output shows the key" |
+| Order | None | `e.position`; `n.mtime DESC` |
+| Bootstrap | Not filtered | "Never listed" (doc 07 §1.1) |
+
+DR2-06 fixed this same pattern for the `INSERT`: the same SQL in two docs, one of them stale. Fix: replace the code block with "Queries: [doc 05 §3.3](05-database-schema-specification.md#33-two-stage-graph-discovery) (links out) and [§3.4](05-database-schema-specification.md#34-backlink-discovery-incoming-references) (links in)."
+
+#### 5. Doc 03 gives two rules for a Markdown link's target (DR2-05 leftover)
+
+| Rule | doc 03 §3, Markdown links | doc 03 §4, link key |
+|---|---|---|
+| Encoding | "Percent-encoding is decoded" | "with `%20` decoded" |
+| `.md` | "Exact files only: no title lookup and no added `.md`" | The key is "without its ... `.md`", and "resolution reads only the key" |
+
+The two rules give different results:
+
+- `[x](Note%20%28draft%29.md)`: under §3 it decodes to `Note (draft)` and matches. Under §4, `%28` and `%29` stay encoded and the link stays a ghost.
+- `[x](Setup)` written in `common/notes/`: under §3 it does not match `Setup.md`. Under §4 its key is `common/notes/setup`, the same key as `[x](Setup.md)`, so it matches.
+
+In the test vault this does not show up yet: it has 0 Markdown links. The resolver still has to pick one rule. Fix, two edits:
+- doc 03 §4: change "with `%20` decoded" to "with percent-encoding decoded (§3)".
+- doc 03 §3: delete "and no added `.md`".
+
+#### 6. Stale and disagreeing statements
+
+| Where | Problem | Fix |
+|---|---|---|
+| doc 01 §3, doc 07 §1 | "Searches and graph walks span the whole vault." A few lines later, doc 07 §1.1 keeps the bootstrap out, and the archive out unless asked. Doc 07 §4 already says "every knowledge note". | "span every knowledge namespace; bootstrap and archive follow §1.1" |
+| doc 04 §1, Default Store Rule | "Anything outside `bootstrap/` and `archive/` is knowledge." But root files and hidden folders are not notes (doc 03 §4). | "Every other top-level folder is knowledge." The doc 04 §1 table already says this. |
+| doc 02 §4, Atomic file writes | "rename over the target" for every write. Doc 07 §5.1 step 4 says creates and moves use a rename that cannot replace. | Append "; creates and moves use a rename that cannot replace ([07 §5.1](07-interface-contracts.md#51-the-write-lock))" |
+| doc 05 §2.1, last bullet | "The sweep ... reports them until one is renamed." Doc 07 §6.2 says the sweep runs inside other tool calls and has no place to report. Doc 03 §4 and doc 07 §6 say `sync`, `rebuild` and `lint` report. | "`sync`, `rebuild` and `lint` report them until one is renamed." |
+| doc 07 §6.1 step 1 | `move_note(note, new_path)`, but §11 makes `expected_checksum` required | `move_note(note, new_path, expected_checksum)` |
+| doc 07 §11, `move_note` output | "every link the move broke, with the `relink` call that fixes them". §6.1 says links inside the moved note are fixed with `edit_note`. | "... with the `relink` call for links into the note; links inside it are fixed with `edit_note` (§6.1)" |
+| doc 07 §6.3 | `relink` is listed among tools whose note argument must match a note. After a move, `relink(old, ...)` names the old id, which no note has, so it always returns `not found`. | "`relink` (`new` and `notes` only; `old` is the old id, which no note has any more)" |
+| doc 07 §6.3, example | Prints `compass/index`. The file is `compass/Index.md` in both the real vault and the test vault, and output shows the id "as written" (doc 07 §6). | `compass/Index` |
+| doc 06, DR1 tracker | DR1-05 cites "doc 05 §3.5", which is now the ghosts query; vector search is §3.6. DR1-11 cites "content-hash observation ids", which DR2-13 removed. | Edit the Status cells only (log rule 3): change to "§3.6", and append "(observation ids later removed, DR2-13)" |
+
+---
+
+### Process
+
+DR2's process note applies again, at a smaller scale. Each fix went into the paragraph that owns the rule. A second copy elsewhere kept the old form: doc 02 §4, doc 03 §5, doc 05 §3.1 and the doc 06 tracker cells. Before marking a finding Resolved, search all docs for the rule's old wording and for any SQL that touches the changed columns.
+
+### Suggested next move
+
+Make one commit and start it with DR3-01, DR3-02 and DR3-05. They touch the create guard, the bootstrap walk query and the link key. The working tree already has `src/resolve.rs` and `src/index.rs` (from git status; I did not read them), so code built now runs into these three first. Put the one-line edits from DR3-03, DR3-04 and DR3-06 in the same commit.
+
+---
+
+### DR3 Finding Tracker
+
+| Id | Finding | Severity | Status |
+| :--- | :--- | :--- | :--- |
+| DR3-01 | Create guard wording (doc 07 §5.1 step 2) refuses existing folders and case-only renames, against §6 and §11 (DR2-03 partial) | Medium | Resolved: only a match on the last name refuses; matching folders are reused, the note's own key is allowed (doc 07 §5.1 step 2) |
+| DR3-02 | Bootstrap walk query (doc 05 §3.1) drops the ghosts that doc 04 §2.2 lists (DR2-08 partial) | Medium | Resolved: the walk query keeps ghosts with a LEFT JOIN and returns `target_ref` (doc 05 §3.1) |
+| DR3-03 | No lint check covers a missing `bootstrap/`, though doc 04 §2.2 sends the user to `lint` (DR2-08 partial) | Medium | Resolved: `load_bootstrap` reads only the index and errors without an entry point; a vault without a bootstrap is valid; lint gives a hint for a missing `bootstrap/`, and check 7 already covers twins (doc 02 §8, doc 04 §2.2) |
+| DR3-04 | Doc 03 §5 keeps an old copy of the `context` queries that returns keys (DR2-01 leftover) | Medium | Resolved: SQL removed from doc 03 §5, which links doc 05 §3.3 and §3.4 |
+| DR3-05 | Doc 03 §3 and §4 decode Markdown link targets and strip `.md` differently (DR2-05 leftover) | Medium | Resolved: the link key decodes all percent-encoding, and Markdown links follow the key on `.md` (doc 03 §3, §4) |
+| DR3-06 | Stale and disagreeing statements (whole-vault search, store rule box, rename over, sweep reports, `move_note` signature and output, `relink` `old`, example id, DR1 tracker cells) | Medium | Resolved: wording aligned in doc 01 §3, doc 02 §4, doc 04 §1, doc 05 §2.1, doc 07 §1, §6.1, §6.3, §11; DR1-05 and DR1-11 status cells updated |
 
 ---
 
@@ -476,13 +643,13 @@ You get something working early, and it answers half of this review with data: r
 | DR1-02 | Link resolution and note identity are not specified | Critical | Resolved: path as id (permalink first, replaced by the path on 2026-11-15), top-level folder as namespace, resolution order, move and relink flow (doc 03 §4, doc 05 §2.1-2.2, doc 07 §6) |
 | DR1-03 | Unstable `rowid` silently corrupts full-text and vector search | Critical | Resolved: doc 05 §2.1, §2.4, §4 |
 | DR1-04 | Embedding pipeline doesn't exist yet | High | Resolved: kept as optional feature, built later; model and runtime chosen then (doc 02 §2, doc 05 §2.5) |
-| DR1-05 | Vector search filters after ranking | High | Resolved: doc 05 §2.5, §3.5 |
+| DR1-05 | Vector search filters after ranking | High | Resolved: doc 05 §2.5, §3.6 |
 | DR1-06 | Sync under concurrency (multi-process, timestamps, write-through, lost updates, DB location) | High | Resolved: doc 02 §4, doc 05 §2.6, §4, §5 |
 | DR1-07 | Cross-domain traversal contradicts the per-project read rule | High | Superseded: allowlist and sealed namespaces dropped on 2026-11-15; a namespace is a perspective, not a boundary, with no isolation in early versions (doc 02 §5, doc 07 §1) |
 | DR1-08 | Notes can promote themselves into the system prompt; archive tier fails open | High | Resolved: archive path rule, bootstrap write flag, new bootstrap notes load only once linked (doc 04 §2.3, §4) |
 | DR1-09 | Overclaims (startup, traversal tokens, edge weights, Basic Memory comparison) | Medium | Resolved: claims restated or deferred to the benchmark; weights computed; comparison rebuilt from Basic Memory v0.24 (doc 01 §2-5, doc 02 §6, doc 03, README) |
 | DR1-10 | Parser collisions with the real vault | Medium | Resolved: observation, relation, link-form, Markdown-link, code, qualifier and summary rules, checked against Basic Memory v0.24 (doc 03 §2-4, doc 05 §2.2-2.3, doc 04 §4) |
-| DR1-11 | Schema nits (edges table, duplicate facts, superseded status, observation ids and search, doc 03 `INSERT`) | Medium | Resolved: `WITHOUT ROWID` edges, inverse pairs merged in queries, edge-based superseded status, content-hash observation ids, `observations_fts` (doc 05 §2.2-2.3, §4.2, doc 03 §3, §5) |
+| DR1-11 | Schema nits (edges table, duplicate facts, superseded status, observation ids and search, doc 03 `INSERT`) | Medium | Resolved: `WITHOUT ROWID` edges, inverse pairs merged in queries, edge-based superseded status, content-hash observation ids (observation ids later removed, DR2-13), `observations_fts` (doc 05 §2.2-2.3, §4.2, doc 03 §3, §5) |
 | DR1-12 | Tiers vs the real vault (empty `rule` tier, active namespace source, schema gate) | Medium | Resolved: tiers replaced by stores, namespace passed by the agent after `load_namespace` (stateless server; doc 04 §3.1, doc 07 §3), vault-wide TOML type schemas with `lint --strict` gate (doc 02 §8) |
 | DR1-13 | Doc hygiene | Medium | Resolved: README links all docs; doc 01 §7 status current; doc 04 renamed to `04-information-stores-and-lifecycle.md`; observations DDL lives only in doc 05; `spec` used consistently; strict lint exits non-zero (doc 02 §8) |
 | DR1-14 | petgraph probably isn't needed | Medium | Resolved: graph library demoted to an implementation detail; plain link-following first, Personalized PageRank only if the benchmark demands it (doc 01 §5, doc 02 §1, §6) |

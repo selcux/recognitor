@@ -32,7 +32,7 @@ What each tool may do in each store: [07-interface-contracts.md §1.1](07-interf
 
 ### Default Store Rule
 
-> **Rule:** A note's location decides its store. Anything outside `bootstrap/` and `archive/` is knowledge. Frontmatter `type` is free metadata and never decides how a note is loaded or searched.
+> **Rule:** A note's location decides its store. Every other top-level folder is knowledge. Frontmatter `type` is free metadata and never decides how a note is loaded or searched.
 
 - Casual Markdown notes without frontmatter land in knowledge and are never injected into startup context.
 - A typo in `type:` can neither drop a note from the bootstrap nor promote one into it. Routing by location fails closed.
@@ -77,7 +77,7 @@ The bootstrap is loaded as a tree, starting from `index.md` and following links 
 
 - **Budget:** the payload size is measured on every load. Above the configured `bootstrap.max_tokens`, the result carries a warning. There are no fixed per-section token targets.
 - **CLI twin:** `recognitor bootstrap` prints the same payload, for harness hooks (§5.1). `recognitor bootstrap --list` prints which notes load, in order, without their content.
-- **No entry point:** when `bootstrap/index.md` is not found (missing, or left out as a case twin), the tool returns one error line instead of the payload: ``error: bootstrap/index.md not found. Run `recognitor lint`.`` `recognitor bootstrap` prints the same line and exits with a non-zero code, so the session-start hook sees the failure. `lint` names the cause.
+- **No entry point:** `load_bootstrap` reads only the index. When the index has no `bootstrap/index.md` (no `bootstrap/` folder, no `index.md`, or a case twin), the tool returns one error line instead of the payload: ``error: bootstrap/index.md not found. Run `recognitor lint`.`` `recognitor bootstrap` prints the same line and exits with a non-zero code. A vault without a bootstrap is valid: the user decides whether the session-start hook calls it. `lint` names the cause ([02-open-questions-and-tradeoffs.md §8](02-open-questions-and-tradeoffs.md)).
 - **Ghost links in the tree:** the payload ends with one line listing them: `not loaded: behavior/personas/Mentor (not written yet)`. Without ghosts, the line is left out.
 
 ### 2.3 Writes
