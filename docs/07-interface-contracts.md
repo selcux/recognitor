@@ -114,9 +114,9 @@ Several agents and the CLI can write to the same vault at the same time. These r
 SQLite protects its own data, but the notes are plain files outside it. Every write tool therefore uses SQLite's write lock as a lock between processes, explicitly:
 
 1. `BEGIN IMMEDIATE`: take the write lock now. Other writers wait, up to `busy_timeout`.
-2. Read the target file **from disk** and hash it. Never trust the index: a human may have edited the file inside the 2-second sync window.
+2. Read the target file **from disk** and hash it. Never trust the index: a human may have edited the file inside the 2-second sync window. A create or a move instead reads each folder on the target path from disk and compares every name in it by key (§6). Any match refuses, even a file the index does not know yet, and even case twins.
 3. Check the edit's guard (§5.2). On a mismatch: `ROLLBACK` and return the rejection (§5.3).
-4. Apply the edit to the disk bytes, write a temporary file, rename it over the note.
+4. Apply the edit to the disk bytes, write a temporary file, rename it over the note. A create or a move uses a rename that fails when the target exists, so a file a human saves after step 2 is never overwritten.
 5. Update the index rows, `COMMIT`.
 
 - **Readers never wait:** in WAL mode ([05-database-schema-specification.md §4.1](05-database-schema-specification.md#41-per-connection-pragmas)), reads run on a snapshot while a write is in progress. Only writers queue behind each other. A snapshot may be a few milliseconds old; the guard catches that if the reader later writes.
@@ -129,7 +129,7 @@ SQLite protects its own data, but the notes are plain files outside it. Every wr
 | `append`, `add_observation`, `add_relation` | Never: applied to the newest version |
 | `find_replace` (text X → Y) | X no longer occurs exactly once |
 | `replace_section` | The section's checksum differs from `expected_checksum` |
-| Create (`write_note` without `expected_checksum`) | The note already exists |
+| Create (`write_note` without `expected_checksum`) | A file or folder with the same key exists on disk (§5.1 step 2) |
 | Overwrite (`write_note` with `expected_checksum`), `move_note`, `delete_note` | The note's checksum differs from `expected_checksum` |
 
 - **No blind overwrites:** `write_note` without a checksum only creates. Overwriting always needs the checksum of the version being replaced.
@@ -145,6 +145,7 @@ A rejection carries a short reason plus the current version of the part that cla
 | `replace_section` | The section as it is now, with its checksum |
 | `find_replace` | The whole note as it is now, with its checksum (X may have moved anywhere), cut at the read limit |
 | Create on an existing note, overwrite, `move_note`, `delete_note` | The whole note as it is now, with its checksum, cut at the read limit |
+| Create or move onto case twins | The path of every twin, without content |
 
 The rejection never repeats the agent's own request: the agent already has it in context.
 
@@ -162,7 +163,8 @@ Recognitor follows the Obsidian model: a note's address is its path. It replaced
 | :--- | :--- |
 | `write_note`, `move_note` | Refused when the key already exists; the error returns the existing note. A new path reuses the spelling of folders that already exist (`Baseline/x.md` lands in `baseline/`) |
 | Files created outside Recognitor (Linux, git) | One or none: none of the twins is indexed. `sync` and `rebuild` print an error naming every twin, and `lint` fails. Twin folders leave out every note under both. The files stay on disk, and the first sweep after a rename indexes them |
-| A tool call or link that hits the name | Treated as a note that does not exist: "not found", or a plain ghost. Twins never enter the system and nothing records them, so only `sync`, `rebuild` and `lint` report them |
+| A read, an edit or a link that hits the name | Treated as a note that does not exist: "not found", or a plain ghost. Twins never enter the system and nothing records them |
+| A create or a move onto the name | Refused, with the path of every twin: the check reads the disk, not the index (§5.1 step 2) |
 
 - **Rejected: indexing one twin.** Picking a winner by sort order or by index age guesses which file the user meant, and the other one silently drops out of search.
 - **Rejected: indexing both twins.** Links and tool calls match by key, so they cannot tell the two apart.
