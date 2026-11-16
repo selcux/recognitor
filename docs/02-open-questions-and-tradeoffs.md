@@ -104,9 +104,11 @@ Resolved in favor of lightweight **Structural Linting** plus optional **vault-wi
   4. Links resolve unambiguously; an ambiguous link stays a ghost with a warning.
   5. Summary paragraphs fit within 300 characters.
   6. A frontmatter `status: superseded` agrees with the `supersedes` edges.
+  7. No two paths share a lowercase key (case twins); twins are an error and none of them is indexed.
+  8. Spelling: an entry point not spelled `index.md`, and a Markdown link whose case differs from the file's, get a warning.
 
   Syntax rules: [03-markdown-format-and-edge-syntax.md](03-markdown-format-and-edge-syntax.md).
-- **Ingestion Tolerance:** Invalid files trigger non-fatal diagnostic warnings during SQLite indexing rather than halting parsing or dropping notes from search.
+- **Ingestion Tolerance:** Invalid files trigger non-fatal diagnostic warnings during SQLite indexing rather than halting parsing or dropping notes from search. The one exception is case twins: indexing one would guess which file the user meant, and indexing both would break link resolution, so none of them is indexed until one is renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
 - **Type Schemas (DR1-12):** one file per vault, `<vault>/.recognitor/schemas.toml`, holds one block per note `type`. A block applies to every note with that `type`, in every namespace, bootstrap included:
 
   ```toml

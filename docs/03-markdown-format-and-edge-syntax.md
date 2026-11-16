@@ -124,6 +124,7 @@ Follow [the deploy checklist](../ops/Deploy%20Checklist.md) before release.
 - Paths resolve relative to the linking note. A leading `/` means the **vault root**, so a Markdown link can cross namespaces.
 - Percent-encoding is decoded; `#fragments` and query strings do not change the target.
 - Exact files only: no title lookup and no added `.md`. A link to a file that does not exist yet stays a ghost until it does.
+- Case does not count (§4), as in Obsidian and on Windows and macOS. `lint` warns when a link's case differs from the file's spelling, because GitHub and Linux tools need the exact case.
 - Ignored: external URLs, `mailto:` and `file:` links, images, fragment-only links (`#section`), and paths that leave the vault.
 - Markdown links are always `links_to`; typed relations use wikilinks under `## Relations`.
 
@@ -143,23 +144,26 @@ Notes in the `archive` namespace are full-text searchable, but the parser create
 
 Recognitor follows the Obsidian model: a note's address is its path ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
 
-- **Note id:** the path from the vault root, exactly as the file is named, without `.md` (`notes.id`), e.g. `common/working-style/ADHD profile`. There is no stored id and no slug conversion, so nothing can drift.
+- **Note id:** the path from the vault root without `.md`, e.g. `common/working-style/ADHD profile`. Output always shows it as written. There is no stored id and no slug conversion, so nothing can drift.
 - **`permalink` is ignored:** the frontmatter field means a web address to Obsidian Publish and an id to Basic Memory; Recognitor leaves it untouched and never indexes it.
-- **Case:** matching ignores case, as Windows and macOS file systems do. Two files in the same folder whose names differ only in case are an error ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
-- **Namespace:** the top-level folder under the vault root (`common/working-style/ADHD profile.md` → `common`). Deeper folders (`working-style`, `personas`) are just folders. Notes stored directly in the vault root belong to the `default` namespace. The namespace is never declared in frontmatter, so it has exactly one source. Hidden folders (`.git/`, `.obsidian/`, `.recognitor/`) are not namespaces and are never indexed.
+- **Case: kept as written, matched in lowercase.** Every name keeps the spelling it was given: folders, file names and the `.md` extension. All matching uses a lowercase **key** of the path instead: links, tool arguments, namespaces, the reserved names `bootstrap` and `archive`, the entry point `index.md`, and the extension (`Note.MD` is a note). Windows, macOS and Obsidian behave the same way.
+  - **One lowercasing everywhere:** keys are made in Rust with Unicode lowercasing, the same in every language (`Ö` → `ö`; Turkish `I` → `i`, not `ı`). SQLite's `COLLATE NOCASE` folds only A to Z, so it is never used for names ([05-database-schema-specification.md §2.1](05-database-schema-specification.md#21-the-notes-table)).
+  - **No case twins, one or none:** two paths with the same key cannot both be notes, at any level: `baseline/Nutrition.md` and `baseline/nutrition.md`, `Note.md` and `Note.MD`, or the folders `Baseline/` and `baseline/`. A name is indexed only when exactly one file has it. When several do, none of them is indexed and the error names them all. Twin folders leave out every note under both. The gate works per name, so the rest of the vault indexes normally ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
+  - **Case-only renames are not moves:** renaming `nutrition.md` to `Nutrition.md` keeps the key, so every link keeps resolving. The sweep notices the new spelling even when size and mtime are unchanged, and stores it.
+- **Namespace:** the top-level folder under the vault root, by its key (`common/working-style/ADHD profile.md` → `common`, and `Common/` would be `common` too). Deeper folders (`working-style`, `personas`) are just folders. Notes stored directly in the vault root belong to the `default` namespace. The namespace is never declared in frontmatter, so it has exactly one source. Hidden folders (`.git/`, `.obsidian/`, `.recognitor/`) are not namespaces and are never indexed.
 - **Reserved namespaces:** `bootstrap` (loaded at session start; its directory can be relocated) and `archive`. See [04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md).
-- **Entry point:** every namespace has an `index.md` at its top level.
+- **Entry point:** every namespace has an `index.md` at its top level, found whatever its case (`Index.md` works). `lint` warns when it is not spelled `index.md`.
 - **Moves:** moving a file changes its id. Moving it into another top-level folder also moves the note into that namespace. Path-style links to it break; `move_note` reports them and `relink` fixes the ones the user picks ([07-interface-contracts.md §6.1](07-interface-contracts.md#61-moving-a-note)).
 
 ### Links: resolved to a note id
 
-Wikilinks name a note by title (`[[ADHD profile]]`), by filename, by path, or with a namespace prefix (`[[cognition::index]]`). The engine resolves each one to a note id in this order. Matching is case-insensitive, and a "name" is a note's title or its filename without `.md`:
+Wikilinks name a note by title (`[[ADHD profile]]`), by filename, by path, or with a namespace prefix (`[[cognition::index]]`). The engine resolves each one to a note id in this order. Matching uses lowercase keys (above), and a "name" is a note's title or its filename without `.md`:
 
 1. **Exact path:** `[[common/working-style/ADHD profile]]` matches a note id, with or without `.md`. Explicit relative paths (`[[./same.md]]`, `[[../guides/Setup.md]]`) resolve relative to the linking note, to that exact file only.
 2. **Prefixed name:** `[[ns::Name]]` matches a name inside namespace `ns`.
 3. **Same-namespace name:** `[[Name]]` matches a name inside the source note's namespace.
 4. **Unique name:** `[[Name]]` matches a name that exists in exactly one namespace.
-5. **Ghost:** no match, or more than one match at the first step that finds any. The link is stored with `target_id = NULL`. An ambiguous link also raises a lint warning, because guessing would create a silently wrong edge. A link that hits a case twin is an error naming both files.
+5. **Ghost:** no match, or more than one match at the first step that finds any. The link is stored with `target_id = NULL`. An ambiguous link also raises a lint warning, because guessing would create a silently wrong edge. A link to a case twin is a plain ghost, because twins never enter the system ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
 
 Filename matching matters for Obsidian, which links by filename even when the frontmatter title differs.
 

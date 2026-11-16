@@ -25,11 +25,12 @@ Stores note metadata, extracted summaries, and body content.
 ```sql
 CREATE TABLE notes (
     pk INTEGER PRIMARY KEY,                    -- Stable rowid alias; notes_fts and notes_vec rows key on this
-    id TEXT NOT NULL UNIQUE,                   -- Path without ".md", exact case (e.g. "common/working-style/ADHD profile"); never read from frontmatter (doc 07 §6)
-    namespace TEXT NOT NULL,                   -- Top-level folder (e.g. "common", "compass"); reserved: "bootstrap", "archive"; "default" for root files
+    id TEXT NOT NULL UNIQUE,                   -- Key: path without the extension, lowercased (e.g. "common/working-style/adhd profile"); edges and observations reference it; never read from frontmatter (doc 03 §4, doc 07 §6)
+    namespace TEXT NOT NULL,                   -- Top-level folder, lowercased (e.g. "common", "compass"); reserved: "bootstrap", "archive"; "default" for root files
     type TEXT NOT NULL DEFAULT 'note',         -- Free frontmatter metadata (e.g. "profile", "decision", "spec", "note"); never decides loading; selects the type schema
-    title TEXT NOT NULL,                       -- Human-readable title from H1 or frontmatter
-    path TEXT NOT NULL UNIQUE,                 -- Path relative to its root (e.g. "common/working-style/ADHD profile.md"); notes from a custom bootstrap directory are stored as "bootstrap/<relative path>"
+    title TEXT NOT NULL,                       -- Human-readable title from H1 or frontmatter, as written
+    title_key TEXT NOT NULL,                   -- Title lowercased; link resolution by title
+    path TEXT NOT NULL UNIQUE,                 -- Path as written, relative to its root (e.g. "common/working-style/ADHD profile.md"); opens the file; output shows it without ".md" as the note's id; notes from a custom bootstrap directory are stored as "bootstrap/<relative path>"
     summary TEXT,                              -- First paragraph synopsis for token-efficient graph traversal
     content TEXT NOT NULL,                     -- Raw Markdown content
     checksum TEXT NOT NULL,                    -- SHA-256 hash of file content for change detection
@@ -40,9 +41,12 @@ CREATE TABLE notes (
 CREATE INDEX idx_notes_namespace ON notes(namespace);
 CREATE INDEX idx_notes_type ON notes(type);
 CREATE INDEX idx_notes_mtime ON notes(mtime);
-CREATE INDEX idx_notes_title ON notes(namespace, title COLLATE NOCASE);  -- Link resolution by title
-CREATE INDEX idx_notes_id_nocase ON notes(id COLLATE NOCASE);           -- Case-insensitive id matching; finds case twins (doc 07 §6)
+CREATE INDEX idx_notes_title ON notes(namespace, title_key);  -- Link resolution by title
 ```
+
+- **Names are keys:** `id`, `namespace` and `title_key` hold lowercase keys made in Rust with Unicode lowercasing ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)). Query parameters are lowercased the same way before they reach SQL. `COLLATE NOCASE` is never used for names, because it folds only A to Z.
+- **Spelling lives in `path` and `title`:** output, and opening the file, use them. A case-only rename keeps `id` and updates `path` (§4.2), so edges and observations are untouched.
+- **Case twins never reach the database:** files that share a key are left out, and nothing records them. The sweep finds them again in the file list each time and reports them until one is renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
 
 ---
 
@@ -214,7 +218,6 @@ CREATE TABLE meta (
 --   last_sweep_started_ms    Unix ms when the last sync sweep started (racy-file detection)
 --   last_sweep_finished_ms   Unix ms when the last sync sweep committed (TTL gate)
 ```
-
 ---
 
 ## 3. Core Query Patterns
@@ -239,8 +242,7 @@ ORDER BY e.position;
 ```sql
 SELECT title, content
 FROM notes
-WHERE namespace = ?1
-  AND path = ?1 || '/index.md';
+WHERE id = ?1 || '/index';                     -- ?1 is the namespace key; matches index.md in any case
 ```
 
 ### 3.3 Two-Stage Graph Discovery
@@ -326,7 +328,7 @@ PRAGMA synchronous = NORMAL;    -- Safe with WAL; the database is rebuildable an
 
 ### 4.2 Write Rules
 
-- **Upsert only:** notes are written with `INSERT ... ON CONFLICT(id) DO UPDATE`. `INSERT OR REPLACE` and `REPLACE` are forbidden: a replace deletes the old row without firing delete triggers (unless `recursive_triggers` is on), which leaves stale `notes_fts` rows and orphaned `notes_vec` rows.
+- **Upsert only:** notes are written with `INSERT ... ON CONFLICT(id) DO UPDATE`. A case-only rename hits the same `id` and updates `path`. `INSERT OR REPLACE` and `REPLACE` are forbidden: a replace deletes the old row without firing delete triggers (unless `recursive_triggers` is on), which leaves stale `notes_fts` rows and orphaned `notes_vec` rows.
 - **Stable keys:** `notes_fts` and `notes_vec` reference `notes.pk`, and `observations_fts` references `observations.pk`, never an implicit `rowid`.
 - **Edges:** inserted with `ON CONFLICT DO NOTHING`, explicit relations before inline links (§2.2).
 - **One writer per sweep:** a sync sweep runs inside `BEGIN IMMEDIATE`, so concurrent processes queue instead of indexing the same files twice.
