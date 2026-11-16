@@ -190,22 +190,7 @@ To prevent LLM context bloat, Recognitor separates graph discovery from note rea
 
 1. **Ingestion Pipeline (Rust):**
    - The streaming parser extracts frontmatter, H1 title, summary paragraph, observations, typed relations, and inline links in a single pass.
-   - Populates SQLite `notes`, `observations`, and `edges` tables:
-     ```sql
-     -- Notes projection (upsert keeps notes.pk stable)
-     INSERT INTO notes (key, namespace, type, title, path, summary, content, checksum, mtime, size)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-     ON CONFLICT(key) DO UPDATE SET
-         namespace = excluded.namespace, type = excluded.type, title = excluded.title,
-         path = excluded.path, summary = excluded.summary, content = excluded.content,
-         checksum = excluded.checksum, mtime = excluded.mtime, size = excluded.size;
-
-     -- Edges projection: explicit relations first, then inline links
-     INSERT INTO edges (source_key, predicate, target_ref, ref_key, is_inline, position, context)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-     ON CONFLICT DO NOTHING;
-     -- target_key is filled by the resolution pass (§4)
-     ```
+   - Populates SQLite `notes`, `observations`, and `edges` tables, following the write rules in [05-database-schema-specification.md §4.2](05-database-schema-specification.md#42-write-rules). `target_key` is filled by link resolution (§4).
 
 2. **Compact Graph Walk (Two-Stage Retrieval):**
    - **Stage 1 (Discovery):** Agent graph traversal tools return compact skeletons containing only `(id, namespace, title, summary, predicate)`. Estimated cost: about 15 tokens per node without the summary and about 40 with it, so 20 nodes cost roughly 800 tokens. Real numbers come from the benchmark (DR1-16).

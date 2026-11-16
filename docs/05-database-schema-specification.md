@@ -354,7 +354,7 @@ PRAGMA synchronous = NORMAL;    -- Safe with WAL; the database is rebuildable an
 
 ### 4.2 Write Rules
 
-- **Upsert only:** notes are written with `INSERT ... ON CONFLICT(key) DO UPDATE`. A case-only rename hits the same `key` and updates `path`. `INSERT OR REPLACE` and `REPLACE` are forbidden: a replace deletes the old row without firing delete triggers (unless `recursive_triggers` is on), which leaves stale `notes_fts` rows and orphaned `notes_vec` rows.
+- **Upsert only:** notes are written with `INSERT ... ON CONFLICT(key) DO UPDATE`, and the update sets every column of §2.1 except `pk` and `key`, so a retitle refreshes `title_key` too. This is the only place the write is specified. A case-only rename hits the same `key` and updates `path`. `INSERT OR REPLACE` and `REPLACE` are forbidden: a replace deletes the old row without firing delete triggers (unless `recursive_triggers` is on), which leaves stale `notes_fts` rows and orphaned `notes_vec` rows.
 - **Stable keys:** `notes_fts` and `notes_vec` reference `notes.pk`, and `observations_fts` references `observations.pk`, never an implicit `rowid`.
 - **Edges:** inserted with `ON CONFLICT DO NOTHING`, explicit relations before inline links (§2.2).
 - **One writer per sweep:** a sync sweep runs inside `BEGIN IMMEDIATE`, so concurrent processes queue instead of indexing the same files twice.

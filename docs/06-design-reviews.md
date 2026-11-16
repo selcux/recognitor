@@ -15,7 +15,7 @@ This document is the running log of design and architecture reviews for Recognit
 
 | Id | Date | Scope | Baseline commit | Score | Findings |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| [DR2](#dr2-2026-11-16-alignment-review-docs-01-07) | 2026-11-16 | Alignment review, docs 01-07 | `8512d2b` | 7/10 | 8 open, 5 resolved |
+| [DR2](#dr2-2026-11-16-alignment-review-docs-01-07) | 2026-11-16 | Alignment review, docs 01-07 | `8512d2b` | 7/10 | 7 open, 6 resolved |
 | [DR1](#dr1-2026-11-14-full-design-review-docs-01-05) | 2026-11-14 | Full design review, docs 01-05 | `9db3af1` | 6/10 | 16 resolved, closed 2026-11-15 |
 
 ---
@@ -255,7 +255,7 @@ Add the store access table from DR2-02 to doc 07 §1. One small table closes the
 | DR2-03 | On a case-sensitive disk, a create or move can overwrite a twin or create one | High | Resolved: creates and moves check the folders on disk by key and use a rename that cannot replace; twins refuse creates (doc 07 §5.1-5.3, §6) |
 | DR2-04 | Bootstrap notice missing from `edit_note`, `relink` and `delete_note` in doc 07 (partial DR1-08 regression) | High | Resolved: the store access table gives every write tool the bootstrap notice, and a move checks both stores (doc 07 §1.1) |
 | DR2-05 | Links stored only as written: ghosts and edges doubled by case, no filename index, full re-resolution on every add | High | Resolved: `edges.ref_key` and `notes.name_key` with indexes; ghosts grouped by key; re-resolution only for links that match the changed note's names (doc 03 §4, doc 05 §2.1, §2.2, §3.5) |
-| DR2-06 | Doc 03 `INSERT` omits `title_key` (DR1-11 regression) | Medium | Open |
+| DR2-06 | Doc 03 `INSERT` omits `title_key` (DR1-11 regression) | Medium | Resolved: SQL removed from doc 03 §5, which links doc 05 §4.2; the upsert updates every column except `pk` and `key` |
 | DR2-07 | `default` namespace: entry point unreachable, merges with a `default/` folder | Medium | Open |
 | DR2-08 | `load_bootstrap()` has no failure output for a missing or twinned entry or for ghost links | Medium | Open |
 | DR2-09 | Move reports miss prefixed, ambiguous and outgoing links; the outside-move report has no destination and the CLI has no `relink` | Medium | Open |
