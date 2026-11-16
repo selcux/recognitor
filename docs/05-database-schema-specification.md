@@ -7,7 +7,7 @@ This document defines the physical SQLite database schema for Recognitor. The da
 ## 1. Schema Design Principles
 
 1. **Unified Relational Graph:** Notes, edges, and observations coexist in a single SQLite database across all namespaces, eliminating siloed databases and enabling cross-domain graph traversal.
-2. **Soft Foreign Keys for Ghost Links:** `edges.source_id` strictly references `notes.id`. `edges.target_ref` keeps the link exactly as written, and `edges.target_id` holds the resolved note id, or `NULL` while the target does not exist. References to uncreated notes are preserved as ghost links without violating database constraints, and heal automatically when the target note appears.
+2. **Soft Foreign Keys for Ghost Links:** `edges.source_key` strictly references `notes.key`. `edges.target_ref` keeps the link exactly as written, and `edges.target_key` holds the resolved note key, or `NULL` while the target does not exist. References to uncreated notes are preserved as ghost links without violating database constraints, and heal automatically when the target note appears.
 3. **Location Decides Treatment:** the reserved namespaces `bootstrap` and `archive` decide how notes are treated ([04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md)). Bootstrap notes share the same tables but never get full-text or vector rows, so search cannot return them. There is no tier column; `type` is free metadata.
 4. **Surgical Granularity:** The `observations` table indexes individual bracketed bullets (`- [category] ...`) with an open text category, allowing agents to retrieve atomic facts without pulling whole files into prompt context.
 5. **Disposable Projection:** The entire database can be deleted at any time and reconstructed deterministically via `recognitor rebuild`. Schema changes never need migrations (see §4.3).
@@ -25,7 +25,7 @@ Stores note metadata, extracted summaries, and body content.
 ```sql
 CREATE TABLE notes (
     pk INTEGER PRIMARY KEY,                    -- Stable rowid alias; notes_fts and notes_vec rows key on this
-    id TEXT NOT NULL UNIQUE,                   -- Key: path without the extension, lowercased (e.g. "common/working-style/adhd profile"); edges and observations reference it; never read from frontmatter (doc 03 §4, doc 07 §6)
+    key TEXT NOT NULL UNIQUE,                  -- The note's id lowercased (e.g. "common/working-style/adhd profile"); edges and observations reference it; never read from frontmatter (doc 03 §4, doc 07 §6)
     namespace TEXT NOT NULL,                   -- Top-level folder, lowercased (e.g. "common", "compass"); reserved: "bootstrap", "archive"; "default" for root files
     type TEXT NOT NULL DEFAULT 'note',         -- Free frontmatter metadata (e.g. "profile", "decision", "spec", "note"); never decides loading; selects the type schema
     title TEXT NOT NULL,                       -- Human-readable title from H1 or frontmatter, as written
@@ -44,8 +44,8 @@ CREATE INDEX idx_notes_mtime ON notes(mtime);
 CREATE INDEX idx_notes_title ON notes(namespace, title_key);  -- Link resolution by title
 ```
 
-- **Names are keys:** `id`, `namespace` and `title_key` hold lowercase keys made in Rust with Unicode lowercasing ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)). Query parameters are lowercased the same way before they reach SQL. `COLLATE NOCASE` is never used for names, because it folds only A to Z.
-- **Spelling lives in `path` and `title`:** output, and opening the file, use them. A case-only rename keeps `id` and updates `path` (§4.2), so edges and observations are untouched.
+- **Names are keys:** `key`, `namespace` and `title_key` hold lowercase keys made in Rust with Unicode lowercasing ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)). Query parameters are lowercased the same way before they reach SQL. `COLLATE NOCASE` is never used for names, because it folds only A to Z.
+- **Spelling lives in `path` and `title`:** output, and opening the file, use them. A case-only rename keeps `key` and updates `path` (§4.2), so edges and observations are untouched.
 - **Case twins never reach the database:** files that share a key are left out, and nothing records them. The sweep finds them again in the file list each time and reports them until one is renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
 
 ---
@@ -56,26 +56,26 @@ Stores directional relations between notes.
 
 ```sql
 CREATE TABLE edges (
-    source_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    source_key TEXT NOT NULL REFERENCES notes(key) ON DELETE CASCADE,
     predicate TEXT NOT NULL,                   -- e.g. "part_of", "has_part", "supersedes", "relates_to", "links_to"
     target_ref TEXT NOT NULL,                  -- Link exactly as written: "Security Architecture", "cognition::index", "../ops/Deploy%20Checklist.md"
-    target_id TEXT,                            -- Resolved note id; NULL = ghost note
+    target_key TEXT,                           -- Resolved note key; NULL = ghost note
     is_inline INTEGER NOT NULL DEFAULT 0,      -- 0: explicit relation from ## Relations, 1: inline link
     position INTEGER NOT NULL,                 -- Source line of the link; keeps the written order for load_bootstrap()
     context TEXT,                              -- Trailing "(context)" of a ## Relations line, or surrounding snippet if inline
-    PRIMARY KEY (source_id, predicate, target_ref)
+    PRIMARY KEY (source_key, predicate, target_ref)
 ) WITHOUT ROWID;
 
--- The primary key already serves outgoing lookups (source_id, then predicate)
-CREATE INDEX idx_edges_target ON edges(target_id, predicate);   -- Backlinks, ghost discovery, and re-resolution
+-- The primary key already serves outgoing lookups (source_key, then predicate)
+CREATE INDEX idx_edges_target ON edges(target_key, predicate);   -- Backlinks, ghost discovery, and re-resolution
 
 -- A deleted note turns every link pointing at it back into a ghost
 CREATE TRIGGER notes_edges_ad AFTER DELETE ON notes BEGIN
-    UPDATE edges SET target_id = NULL WHERE target_id = old.id;
+    UPDATE edges SET target_key = NULL WHERE target_key = old.key;
 END;
 ```
 
-Resolution rules for `target_ref` → `target_id` are defined in [03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution). The engine re-resolves links after every sync that adds, removes, or retitles a note.
+Resolution rules for `target_ref` → `target_key` are defined in [03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution). The engine re-resolves links after every sync that adds, removes, or retitles a note.
 
 - **One row per fact as written:** a note that links the same target twice with the same predicate gets one row. Explicit relations are inserted before inline links with `ON CONFLICT DO NOTHING`, so the explicit row wins.
 - **Both directions are kept:** `A has_part B` and `B part_of A` are two rows, because `load_bootstrap()` needs links exactly as written. Graph queries treat such an inverse pair as one fact.
@@ -89,8 +89,8 @@ Stores atomic facts, rules, and decisions extracted from bracketed bullet lists.
 ```sql
 CREATE TABLE observations (
     pk INTEGER PRIMARY KEY,                    -- Stable rowid alias; observations_fts rows key on this
-    id TEXT NOT NULL UNIQUE,                   -- "<note_id>#<first 8 hex chars of SHA-256(content)>"; "-2", "-3" suffix for repeats within a note
-    note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    id TEXT NOT NULL UNIQUE,                   -- "<note_key>#<first 8 hex chars of SHA-256(content)>"; "-2", "-3" suffix for repeats within a note
+    note_key TEXT NOT NULL REFERENCES notes(key) ON DELETE CASCADE,
     category TEXT NOT NULL,                    -- Open vocabulary, stored lowercase: "fact", "rule", "avoid", "decision", "goal", etc.
     content TEXT NOT NULL,                     -- Observation text without the category bracket and qualifier
     qualifiers TEXT,                           -- Raw qualifier text: "@effective:2026-11-11", "@valid[2026-01-01,2026-07-01)"; parsed when date-aware queries are built
@@ -98,7 +98,7 @@ CREATE TABLE observations (
     line_number INTEGER NOT NULL               -- Source line number in Markdown file
 );
 
-CREATE INDEX idx_obs_note ON observations(note_id);
+CREATE INDEX idx_obs_note ON observations(note_key);
 CREATE INDEX idx_obs_category ON observations(category);
 ```
 
@@ -227,10 +227,10 @@ CREATE TABLE meta (
 The walk itself runs in Rust with a visited set, depth-first from `bootstrap/index.md` ([04-information-stores-and-lifecycle.md §2.2](04-information-stores-and-lifecycle.md)). A recursive SQL query cannot keep one visited set across branches. Each step asks for a note's outgoing links in written order:
 
 ```sql
-SELECT e.target_id
+SELECT e.target_key
 FROM edges e
-JOIN notes n ON n.id = e.target_id
-WHERE e.source_id = ?1
+JOIN notes n ON n.key = e.target_key
+WHERE e.source_key = ?1
   AND e.is_inline = 0                          -- ## Relations links only
   AND e.predicate != 'supersedes'              -- never load a retired version
   AND n.namespace = 'bootstrap'                -- never leave the bootstrap; ghosts drop out of the JOIN
@@ -242,7 +242,7 @@ ORDER BY e.position;
 ```sql
 SELECT title, content
 FROM notes
-WHERE id = ?1 || '/index';                     -- ?1 is the namespace key; matches index.md in any case
+WHERE key = ?1 || '/index';                     -- ?1 is the namespace key; matches index.md in any case
 ```
 
 ### 3.3 Two-Stage Graph Discovery
@@ -252,15 +252,16 @@ Returns outgoing edges without loading full note content. Links into the bootstr
 SELECT
     e.predicate,
     e.target_ref,
-    e.target_id,
+    n.path,                                    -- The id as written; NULL for a ghost, which shows target_ref
     n.namespace,
     n.title,
     n.summary,
-    CASE WHEN e.target_id IS NULL THEN 1 ELSE 0 END AS is_ghost
+    CASE WHEN e.target_key IS NULL THEN 1 ELSE 0 END AS is_ghost
 FROM edges e
-LEFT JOIN notes n ON e.target_id = n.id
-WHERE e.source_id = ?1
-  AND (n.namespace IS NULL OR n.namespace != 'bootstrap');
+LEFT JOIN notes n ON e.target_key = n.key
+WHERE e.source_key = ?1
+  AND (n.namespace IS NULL OR n.namespace != 'bootstrap')
+ORDER BY e.position;                           -- Written order (doc 07 §8)
 ```
 
 ### 3.4 Backlink Discovery (Incoming References)
@@ -269,14 +270,15 @@ Finds all notes referencing a target note across knowledge namespaces:
 ```sql
 SELECT
     e.predicate,
-    e.source_id,
+    n.path,                                    -- The id as written
     n.namespace,
     n.title,
     n.summary
 FROM edges e
-JOIN notes n ON e.source_id = n.id
-WHERE e.target_id = ?1
-  AND n.namespace != 'bootstrap';
+JOIN notes n ON e.source_key = n.key
+WHERE e.target_key = ?1
+  AND n.namespace != 'bootstrap'
+ORDER BY n.mtime DESC;                         -- Most recently changed first (doc 07 §8)
 ```
 
 ### 3.5 Ghost Notes Discovery (Unwritten Concept Backlog)
@@ -288,7 +290,7 @@ SELECT
     COUNT(*) AS mention_count,
     GROUP_CONCAT(DISTINCT e.predicate) AS predicates
 FROM edges e
-WHERE e.target_id IS NULL
+WHERE e.target_key IS NULL
 GROUP BY e.target_ref
 ORDER BY mention_count DESC;
 ```
@@ -298,7 +300,7 @@ Finds semantically similar notes across the whole vault (optional feature). The 
 
 ```sql
 SELECT
-    n.id,
+    n.path,
     n.namespace,
     n.title,
     n.summary,
@@ -328,7 +330,7 @@ PRAGMA synchronous = NORMAL;    -- Safe with WAL; the database is rebuildable an
 
 ### 4.2 Write Rules
 
-- **Upsert only:** notes are written with `INSERT ... ON CONFLICT(id) DO UPDATE`. A case-only rename hits the same `id` and updates `path`. `INSERT OR REPLACE` and `REPLACE` are forbidden: a replace deletes the old row without firing delete triggers (unless `recursive_triggers` is on), which leaves stale `notes_fts` rows and orphaned `notes_vec` rows.
+- **Upsert only:** notes are written with `INSERT ... ON CONFLICT(key) DO UPDATE`. A case-only rename hits the same `key` and updates `path`. `INSERT OR REPLACE` and `REPLACE` are forbidden: a replace deletes the old row without firing delete triggers (unless `recursive_triggers` is on), which leaves stale `notes_fts` rows and orphaned `notes_vec` rows.
 - **Stable keys:** `notes_fts` and `notes_vec` reference `notes.pk`, and `observations_fts` references `observations.pk`, never an implicit `rowid`.
 - **Edges:** inserted with `ON CONFLICT DO NOTHING`, explicit relations before inline links (§2.2).
 - **One writer per sweep:** a sync sweep runs inside `BEGIN IMMEDIATE`, so concurrent processes queue instead of indexing the same files twice.

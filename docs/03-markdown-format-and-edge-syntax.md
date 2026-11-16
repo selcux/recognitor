@@ -144,7 +144,10 @@ Notes in the `archive` namespace are full-text searchable, but the parser create
 
 Recognitor follows the Obsidian model: a note's address is its path ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
 
-- **Note id:** the path from the vault root without `.md`, e.g. `common/working-style/ADHD profile`. Output always shows it as written. There is no stored id and no slug conversion, so nothing can drift.
+- **Id and key:** a note has two names, both made from its path from the vault root:
+  - **id:** the path without `.md`, as written: `common/working-style/ADHD profile`. Every output shows it, and links and tool arguments use it.
+  - **key:** the id in lowercase: `common/working-style/adhd profile`. The database stores it and matches by it. No output shows it.
+  - Both come from the path, never from frontmatter, and there is no slug conversion, so nothing can drift.
 - **`permalink` is ignored:** the frontmatter field means a web address to Obsidian Publish and an id to Basic Memory; Recognitor leaves it untouched and never indexes it.
 - **Case: kept as written, matched in lowercase.** Every name keeps the spelling it was given: folders, file names and the `.md` extension. All matching uses a lowercase **key** of the path instead: links, tool arguments, namespaces, the reserved names `bootstrap` and `archive`, the entry point `index.md`, and the extension (`Note.MD` is a note). Windows, macOS and Obsidian behave the same way.
   - **One lowercasing everywhere:** keys are made in Rust with Unicode lowercasing, the same in every language (`Ö` → `ö`; Turkish `I` → `i`, not `ı`). SQLite's `COLLATE NOCASE` folds only A to Z, so it is never used for names ([05-database-schema-specification.md §2.1](05-database-schema-specification.md#21-the-notes-table)).
@@ -163,7 +166,7 @@ Wikilinks name a note by title (`[[ADHD profile]]`), by filename, by path, or wi
 2. **Prefixed name:** `[[ns::Name]]` matches a name inside namespace `ns`.
 3. **Same-namespace name:** `[[Name]]` matches a name inside the source note's namespace.
 4. **Unique name:** `[[Name]]` matches a name that exists in exactly one namespace.
-5. **Ghost:** no match, or more than one match at the first step that finds any. The link is stored with `target_id = NULL`. An ambiguous link also raises a lint warning, because guessing would create a silently wrong edge. A link to a case twin is a plain ghost, because twins never enter the system ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
+5. **Ghost:** no match, or more than one match at the first step that finds any. The link is stored with `target_key = NULL`. An ambiguous link also raises a lint warning, because guessing would create a silently wrong edge. A link to a case twin is a plain ghost, because twins never enter the system ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
 
 Filename matching matters for Obsidian, which links by filename even when the frontmatter title differs.
 
@@ -171,7 +174,7 @@ Filename matching matters for Obsidian, which links by filename even when the fr
 
 - **Raw text is kept:** `edges.target_ref` stores the link exactly as written, so it can be resolved again later.
 - **Ghosts heal:** after every sync that adds, removes, or retitles a note, all links are re-resolved. A link written before its target existed resolves once the target is created, wherever it lands (`backend/specs/security-architecture`, not only a guessed `backend/security-architecture`).
-- **Deletes revert to ghosts:** links to a deleted note return to `target_id = NULL` and show up in the ghost backlog.
+- **Deletes revert to ghosts:** links to a deleted note return to `target_key = NULL` and show up in the ghost backlog.
 - **Title renames:** links that use the old title become ghosts and show up in the ghost backlog, unless the filename still matches.
 - **File moves:** a move breaks path-style links (`[[ideas/caching]]`) to the moved note. A name link keeps resolving through steps 3 and 4, unless the move makes the name ambiguous. A move made outside Recognitor shows up in the sweep as a deleted and a created file with the same checksum, and is reported as a probable move ([07-interface-contracts.md §6.2](07-interface-contracts.md#62-moves-outside-recognitor)).
 - **Obsidian:** Obsidian does not understand `[[ns::Title]]` and shows it as an unresolved link. The syntax stays because existing notes use it.
@@ -187,18 +190,18 @@ To prevent LLM context bloat, Recognitor separates graph discovery from note rea
    - Populates SQLite `notes`, `observations`, and `edges` tables:
      ```sql
      -- Notes projection (upsert keeps notes.pk stable)
-     INSERT INTO notes (id, namespace, type, title, path, summary, content, checksum, mtime, size)
+     INSERT INTO notes (key, namespace, type, title, path, summary, content, checksum, mtime, size)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-     ON CONFLICT(id) DO UPDATE SET
+     ON CONFLICT(key) DO UPDATE SET
          namespace = excluded.namespace, type = excluded.type, title = excluded.title,
          path = excluded.path, summary = excluded.summary, content = excluded.content,
          checksum = excluded.checksum, mtime = excluded.mtime, size = excluded.size;
 
      -- Edges projection: explicit relations first, then inline links
-     INSERT INTO edges (source_id, predicate, target_ref, is_inline, position, context)
+     INSERT INTO edges (source_key, predicate, target_ref, is_inline, position, context)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6)
      ON CONFLICT DO NOTHING;
-     -- target_id is filled by the resolution pass (§4)
+     -- target_key is filled by the resolution pass (§4)
      ```
 
 2. **Compact Graph Walk (Two-Stage Retrieval):**
@@ -209,9 +212,9 @@ To prevent LLM context bloat, Recognitor separates graph discovery from note rea
    - The SQLite index supports immediate incoming and outgoing queries:
      ```sql
      -- Outgoing edges
-     SELECT predicate, target_ref, target_id FROM edges WHERE source_id = ?;
+     SELECT predicate, target_ref, target_key FROM edges WHERE source_key = ?;
 
      -- Incoming backlinks
-     SELECT predicate, source_id FROM edges WHERE target_id = ?;
+     SELECT predicate, source_key FROM edges WHERE target_key = ?;
      ```
    - Neither the user nor the agent ever writes reciprocal backlinks into source Markdown files.

@@ -76,7 +76,7 @@ One block per hit:
 3 more: page 2
 ```
 
-- **Line 1:** the id. The title is added only when it differs from the filename.
+- **Line 1:** the id. The title is added only when it differs from the filename by key, so `Index.md` titled `Index` shows no title.
 - **Line 2:** the summary (at most 300 characters, [03-markdown-format-and-edge-syntax.md §2](03-markdown-format-and-edge-syntax.md#2-note-anatomy--layout)).
 - **Below:** up to 3 observation lines that matched the query.
 - **Paging:** 10 hits per page by default; the last line says how many more exist.
@@ -133,7 +133,7 @@ The rejection never repeats the agent's own request: the agent already has it in
 
 Recognitor follows the Obsidian model: a note's address is its path. It replaced the earlier permalink identity on 2026-11-15; resolution rules are in [03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution).
 
-- **Id = path:** a note's id is its path from the vault root without `.md` (`common/working-style/ADHD profile`). Output always shows it as written. There is no stored id and no slug conversion, so nothing can drift, and Obsidian path links match without conversion.
+- **Id = path:** a note's id is its path from the vault root without `.md` (`common/working-style/ADHD profile`). Output always shows it as written. The database stores its lowercase **key** instead ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)), and no output shows the key. Both come from the path, never from frontmatter, with no slug conversion, so nothing can drift, and Obsidian path links match without conversion.
 - **Kept as written, matched in lowercase:** links, tool arguments and namespaces match a lowercase key of the path, as Windows, macOS and Obsidian do ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)).
 - **No case twins:** two paths with the same key are an error at any level, folders included (`common/ADHD profile.md` and `common/adhd profile.md`; `Baseline/` and `baseline/`). The same name in different folders is fine (every namespace has an `index.md`).
 
