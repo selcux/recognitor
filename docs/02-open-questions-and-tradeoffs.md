@@ -31,7 +31,7 @@ Resolved in favor of a two-tier model: dedicated `## Relations` section for type
 
 - **Typed Relations:** Stored in bullet list format (`- <predicate> [[Target]]`) under a reserved `## Relations` section at the end of the note.
 - **Inline Mentions:** Inline `[[wikilinks]]` in body prose are indexed automatically as generic `links_to` edges.
-- **Summary Extraction:** The immediate first paragraph following the H1 heading is indexed as a 1-sentence note summary for token-efficient lazy graph traversal.
+- **Summary Extraction:** The first paragraph after the H1 heading is the note's summary, for token-efficient graph traversal. Extraction rules: [03-markdown-format-and-edge-syntax.md §2](03-markdown-format-and-edge-syntax.md#2-note-anatomy--layout).
 - **Unidirectional Authoring:** Backlinks and bidirectional traversals are computed in SQLite and Rust, never authored manually in Markdown files.
 
 ---
@@ -53,6 +53,7 @@ Resolved in favor of **deterministic on-demand reconciliation with a 2-second TT
 | :--- | :--- | :--- |
 | **Inequality, not ordering** | A file is dirty when `(mtime, size) != (notes.mtime, notes.size)`. Never `disk.mtime > notes.mtime`. | Cloud sync and backup restores can deliver files with older timestamps. |
 | **Racy files** | A file whose `mtime` is not older than `last_sweep_started_ms` of the sweep that indexed it is re-hashed on the next sweep. | An edit inside the same timestamp tick as the indexing pass leaves `(mtime, size)` unchanged. Git handles its index the same way. |
+| **Names, not only stats** | Each sweep also checks the file list itself: a new spelling of a known key (a case-only rename) is stored even when `(mtime, size)` is unchanged, and non-ASCII names and case twins are left out ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)). | A rename can keep mtime and size, and renaming one twin makes the other indexable without that file changing. |
 | **Checksum gate** | When metadata changed, hash first; re-parse only when `checksum` differs. | `git checkout` and sync tools rewrite timestamps without changing content. |
 | **Shared TTL gate** | The 2-second gate reads `last_sweep_finished_ms` from the `meta` table, not from process memory. | CLI invocations and several MCP servers (one per agent session) share one gate. |
 | **Single writer** | The sweep runs inside `BEGIN IMMEDIATE` with WAL mode and `busy_timeout`. | Concurrent processes queue instead of indexing the same files twice. |
@@ -106,6 +107,7 @@ Resolved in favor of lightweight **Structural Linting** plus optional **vault-wi
   6. A frontmatter `status: superseded` agrees with the `supersedes` edges.
   7. Every file and folder name is ASCII, and no two paths share a lowercase key (case twins). Both are errors, and the files are not indexed.
   8. Spelling: an entry point not spelled `index.md`, and a Markdown link whose case differs from the file's, get a warning.
+  9. Every namespace has an `index.md`; a namespace without one gets a warning.
 
   Syntax rules: [03-markdown-format-and-edge-syntax.md](03-markdown-format-and-edge-syntax.md).
 - **Ingestion Tolerance:** Invalid files trigger non-fatal diagnostic warnings during SQLite indexing rather than halting parsing or dropping notes from search. The exceptions are names: a non-ASCII name is not indexed, and neither are case twins, because indexing one would guess which file the user meant and indexing both would break link resolution. Both stay out until renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
@@ -131,7 +133,7 @@ Resolved in favor of lightweight **Structural Linting** plus optional **vault-wi
   - **Rejected: per-namespace schemas.** In the Basic Memory vault they produced an identical duplicate (`plan` defined in two projects) and unchecked notes (`decision` and `record` used in projects that have no schema for them).
   - **Rejected: schema notes in Markdown.** They turn notes into configuration.
   - **Rejected: Picoschema.** A schema DSL is exactly what this section avoids.
-- **Strict CLI Lint:** `recognitor lint --strict` turns structural and schema warnings into errors and exits non-zero on any violation, for pre-commit hooks and CI workflows.
+- **Lint exit code:** `recognitor lint` exits non-zero when it finds an error (check 7: non-ASCII names, case twins). `recognitor lint --strict` also turns structural and schema warnings into errors, for pre-commit hooks and CI workflows.
 
 ---
 

@@ -93,7 +93,6 @@ Stores atomic facts, rules, and decisions extracted from bracketed bullet lists.
 ```sql
 CREATE TABLE observations (
     pk INTEGER PRIMARY KEY,                    -- Stable rowid alias; observations_fts rows key on this
-    id TEXT NOT NULL UNIQUE,                   -- "<note_key>#<first 8 hex chars of SHA-256(content)>"; "-2", "-3" suffix for repeats within a note
     note_key TEXT NOT NULL REFERENCES notes(key) ON DELETE CASCADE,
     category TEXT NOT NULL,                    -- Open vocabulary, stored lowercase: "fact", "rule", "avoid", "decision", "goal", etc.
     content TEXT NOT NULL,                     -- Observation text without the category bracket and qualifier
@@ -103,10 +102,7 @@ CREATE TABLE observations (
 );
 
 CREATE INDEX idx_obs_note ON observations(note_key);
-CREATE INDEX idx_obs_category ON observations(category);
 ```
-
-- **Stable ids:** the id comes from the observation's text, not its line. Editing other lines leaves it unchanged, and changing the category or qualifier keeps the same fact's id. Only rewording the text gives a new id.
 
 #### Observation Full-Text Search (`observations_fts`)
 
@@ -377,5 +373,5 @@ The database never lives inside the vault. Cloud sync tools and git would copy i
 | **macOS** | `~/Library/Caches/recognitor/<vault-id>.db` |
 
 - **`<vault-id>`:** first 16 hex characters of the SHA-256 of the canonical absolute vault root path (symlinks resolved; on Windows, lowercased and without the `\\?\` prefix). Two vaults never share a database, and two users never share a directory.
-- **Override:** the `RECOGNITOR_DB` environment variable or `db_path` in the config file sets an explicit path.
+- **Override:** the `RECOGNITOR_DB` environment variable or `db.path` in the config file sets an explicit path. Config keys use one style: `section.name` (`db.path`, `read.max_tokens`, `bootstrap.max_tokens`).
 - **Implementation hint:** the `directories` crate (`ProjectDirs::cache_dir()`) resolves these paths per platform.

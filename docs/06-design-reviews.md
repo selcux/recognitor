@@ -15,7 +15,7 @@ This document is the running log of design and architecture reviews for Recognit
 
 | Id | Date | Scope | Baseline commit | Score | Findings |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| [DR2](#dr2-2026-11-16-alignment-review-docs-01-07) | 2026-11-16 | Alignment review, docs 01-07 | `8512d2b` | 7/10 | 1 open, 12 resolved |
+| [DR2](#dr2-2026-11-16-alignment-review-docs-01-07) | 2026-11-16 | Alignment review, docs 01-07 | `8512d2b` | 7/10 | 13 resolved |
 | [DR1](#dr1-2026-11-14-full-design-review-docs-01-05) | 2026-11-14 | Full design review, docs 01-05 | `9db3af1` | 6/10 | 16 resolved, closed 2026-11-15 |
 
 ---
@@ -262,7 +262,7 @@ Add the store access table from DR2-02 to doc 07 §1. One small table closes the
 | DR2-10 | Tool arguments given by name have no source namespace; `index` is always ambiguous | Medium | Resolved: tool arguments resolve by steps 1, 2 and 4; several matches return the ids and run nothing (doc 07 §6.3) |
 | DR2-11 | Custom bootstrap directory collides with `<vault>/bootstrap/`; writes and trash undefined | Medium | Resolved: no custom bootstrap directory in this version; the bootstrap is always `<vault>/bootstrap/` (docs 02, 03, 04 §1, §2.1, doc 05 §2.1, §2.6) |
 | DR2-12 | Lowercasing claim is wrong for non-ASCII names; no Unicode normalization | Medium | Resolved: file and folder names are ASCII only, tested on NTFS and ext4; non-ASCII names are refused or left out like case twins (doc 02 §8, doc 03 §4, doc 05 §2.1, doc 07 §6, §11) |
-| DR2-13 | Stale and disagreeing statements (summary, lint list and exit code, sweep signals, config keys, unused schema items) | Medium | Open |
+| DR2-13 | Stale and disagreeing statements (summary, lint list and exit code, sweep signals, config keys, unused schema items) | Medium | Resolved: summary links doc 03 §2; lint check 9 and exit codes; name signals in the sweep rules; config keys as `section.name`; `observations.id` and `idx_obs_category` removed (doc 02 §3, §4, §8, doc 05 §2.3, §5) |
 
 ---
 
