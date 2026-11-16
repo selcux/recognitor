@@ -150,7 +150,7 @@ Resolved in [07-interface-contracts.md](07-interface-contracts.md): a stateless 
 Resolved in favor of **three stores separated by location** (bootstrap, knowledge namespaces, archive), replacing the 5-tier model in which frontmatter `type` decided loading. Full specification in [04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md).
 
 - **Bootstrap as a tree:** `load_bootstrap()` walks `## Relations` links from `bootstrap/index.md`, depth-first in written order, never following inline mentions, `supersedes`, reversed edges, or links that leave the bootstrap. Notes no link reaches do not load, so linking selects the active persona (DR1-01).
-- **Relocatable:** the bootstrap defaults to `<vault>/bootstrap/`; `recognitor config set bootstrap-dir <path>` moves it. Its notes always belong to the reserved namespace `bootstrap`.
+- **Fixed location:** the bootstrap is always `<vault>/bootstrap/`; this version has no custom bootstrap directory (DR2-11). Its notes belong to the reserved namespace `bootstrap`.
 - **Global rules only:** everything in the bootstrap applies in every project. Project rules stay in the repository's own instruction files (`AGENTS.md`, `CLAUDE.md`, Cursor rules), so each rule has one home.
 - **Namespace entry:** every namespace has an `index.md`; `load_namespace(ns)` returns it and keeps no state ([07-interface-contracts.md §3](07-interface-contracts.md#3-load_namespacens)).
 - **Same tables:** bootstrap notes share the schema but get no full-text or vector rows, so search cannot return them.

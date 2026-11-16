@@ -31,7 +31,7 @@ CREATE TABLE notes (
     title TEXT NOT NULL,                       -- Human-readable title from H1 or frontmatter, as written
     title_key TEXT NOT NULL,                   -- Title lowercased; link resolution by title
     name_key TEXT NOT NULL,                    -- Filename without ".md", lowercased; link resolution by filename
-    path TEXT NOT NULL UNIQUE,                 -- Path as written, relative to its root (e.g. "common/working-style/ADHD profile.md"); opens the file; output shows it without ".md" as the note's id; notes from a custom bootstrap directory are stored as "bootstrap/<relative path>"
+    path TEXT NOT NULL UNIQUE,                 -- Path as written, relative to the vault root (e.g. "common/working-style/ADHD profile.md"); opens the file; output shows it without ".md" as the note's id
     summary TEXT,                              -- First paragraph synopsis for token-efficient graph traversal
     content TEXT NOT NULL,                     -- Raw Markdown content
     checksum TEXT NOT NULL,                    -- SHA-256 hash of file content for change detection
@@ -218,7 +218,6 @@ CREATE TABLE meta (
 
 -- Keys:
 --   vault_root               Canonical absolute vault root path
---   bootstrap_root           Canonical absolute bootstrap directory path
 --   last_sweep_started_ms    Unix ms when the last sync sweep started (racy-file detection)
 --   last_sweep_finished_ms   Unix ms when the last sync sweep committed (TTL gate)
 ```

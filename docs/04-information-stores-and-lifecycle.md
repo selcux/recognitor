@@ -21,7 +21,7 @@ Information in an agent environment changes at different speeds and is read in d
 
 | | Bootstrap | Knowledge namespaces | Archive |
 | :--- | :--- | :--- | :--- |
-| **Location** | `bootstrap/` (or a configured directory) | Every other top-level folder | `archive/` |
+| **Location** | `bootstrap/` | Every other top-level folder | `archive/` |
 | **Read as** | Instructions and grounding | Data | Data |
 | **Loaded** | Whole link tree, once per session | `index.md` on entry; everything else on demand | Only on explicit request |
 | **Engine treatment** | Tree walk from `index.md` | Full-text search, vector search (optional), graph walks | Full-text search on request |
@@ -56,7 +56,7 @@ bootstrap/
 
 - **Convention, not semantics:** `profile/`, `behavior/` and `rules/` organize the files for humans. The engine reserves no folder names inside the bootstrap.
 - **Global rules only:** everything the bootstrap loads applies in every project and namespace. Recognitor serves no per-namespace rules; project rules live in the project repository's own instruction files (§5.2).
-- **Custom directory:** the bootstrap defaults to `<vault>/bootstrap/`. The user can point it elsewhere with `recognitor config set bootstrap-dir <path>`. Notes there always belong to the namespace `bootstrap`, so `bootstrap` is a reserved namespace name.
+- **Fixed location:** the bootstrap is always `<vault>/bootstrap/`, and `bootstrap` is a reserved namespace name. This version has no custom bootstrap directory (DR2-11).
 
 ### 2.2 Loading: `load_bootstrap()`
 
