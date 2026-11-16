@@ -25,8 +25,10 @@ Information in an agent environment changes at different speeds and is read in d
 | **Read as** | Instructions and grounding | Data | Data |
 | **Loaded** | Whole link tree, once per session | `index.md` on entry; everything else on demand | Only on explicit request |
 | **Engine treatment** | Tree walk from `index.md` | Full-text search, vector search (optional), graph walks | Full-text search on request |
-| **In search results** | Never | Yes, ranked higher when the search names their namespace | Only when requested |
+| **In search results** | Never | Yes, ranked higher when the search names their namespace | Only when the search names `archive` |
 | **Main writer** | The user | Agents and the user | Agents, append only |
+
+What each tool may do in each store: [07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access).
 
 ### Default Store Rule
 
@@ -80,7 +82,7 @@ The bootstrap is loaded as a tree, starting from `index.md` and following links 
 
 Bootstrap notes are read as instructions in every future session, so writes to them carry more weight than knowledge writes (DR1-08):
 
-- When an MCP write or edit touches a note in the bootstrap, the tool result states that the note loads as instructions at session start.
+- When an MCP write or edit touches a note in the bootstrap, the tool result states that the note loads as instructions at session start ([07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access)).
 - A new bootstrap note loads only once a loaded note links to it, so an agent cannot add instructions without editing a note that already loads. That edit shows in the vault's git history.
 
 ---
@@ -94,7 +96,7 @@ Every top-level folder other than `bootstrap/` and `archive/` is a knowledge nam
 - Returns the body of `<ns>/index.md`, the namespace's entry point, plus one tool-generated line telling the agent to pass `ns` to `search`.
 - Keeps no state. The agent passes `ns` to later searches, which rank the namespace's notes higher without filtering out the rest ([07-interface-contracts.md §3-4](07-interface-contracts.md#3-load_namespacens)).
 - A namespace without `index.md` returns its note list instead, and lint reports it.
-- `bootstrap` cannot be loaded this way; `load_bootstrap()` loads it. `archive` can be loaded explicitly.
+- `bootstrap` cannot be loaded this way; `load_bootstrap()` loads it. `archive` can be loaded explicitly ([07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access)).
 
 ### 3.2 On-Demand Retrieval
 
@@ -109,7 +111,7 @@ All other knowledge notes are cold storage, queried through full-text search, ve
 > **Rule:** Any note in the `archive` namespace (top-level folder `archive/`) is archive material, whatever its `type`.
 
 - Routing by `type` would fail open: a misspelled `type: sesion_record` would land a raw transcript in knowledge and expose it to every standard search. The path rule fails closed.
-- Archive notes are excluded from default searches and graph walks, and are searched only on explicit request.
+- Archive notes are searched only on explicit request: a search that names `archive` as its namespace. `context` lists them marked `(archive)`, and agents only create them and append to them ([07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access)).
 - **Graph-silent:** archive notes are full-text searchable, but the parser creates no observations and no edges from them. Raw transcripts would otherwise flood the graph with false observations and ghost links ([03-markdown-format-and-edge-syntax.md §3](03-markdown-format-and-edge-syntax.md)).
 
 ---

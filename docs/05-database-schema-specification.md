@@ -8,7 +8,7 @@ This document defines the physical SQLite database schema for Recognitor. The da
 
 1. **Unified Relational Graph:** Notes, edges, and observations coexist in a single SQLite database across all namespaces, eliminating siloed databases and enabling cross-domain graph traversal.
 2. **Soft Foreign Keys for Ghost Links:** `edges.source_key` strictly references `notes.key`. `edges.target_ref` keeps the link exactly as written, and `edges.target_key` holds the resolved note key, or `NULL` while the target does not exist. References to uncreated notes are preserved as ghost links without violating database constraints, and heal automatically when the target note appears.
-3. **Location Decides Treatment:** the reserved namespaces `bootstrap` and `archive` decide how notes are treated ([04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md)). Bootstrap notes share the same tables but never get full-text or vector rows, so search cannot return them. There is no tier column; `type` is free metadata.
+3. **Location Decides Treatment:** the reserved namespaces `bootstrap` and `archive` decide how notes are treated ([04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md)). Bootstrap notes share the same tables but never get full-text or vector rows, so search cannot return them. There is no tier column; `type` is free metadata. What each tool may do in each store is defined in [07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access).
 4. **Surgical Granularity:** The `observations` table indexes individual bracketed bullets (`- [category] ...`) with an open text category, allowing agents to retrieve atomic facts without pulling whole files into prompt context.
 5. **Disposable Projection:** The entire database can be deleted at any time and reconstructed deterministically via `recognitor rebuild`. Schema changes never need migrations (see §4.3).
 6. **Native Vector Search (Optional):** Embedded `sqlite-vec` virtual tables store dense embeddings directly alongside relational data, enabling hybrid semantic search with zero external vector databases or daemons.
@@ -140,7 +140,7 @@ END;
 
 ### 2.4 The Full-Text Search Table (`notes_fts`)
 
-SQLite FTS5 virtual table for keyword search across titles, summaries, and content using an external content table to minimize database footprint. Bootstrap notes are never indexed.
+SQLite FTS5 virtual table for keyword search across titles, summaries, and content using an external content table to minimize database footprint. Bootstrap notes are never indexed. Archive notes are indexed, and the search query decides when they match (§3.7).
 
 ```sql
 CREATE VIRTUAL TABLE notes_fts USING fts5(
@@ -296,7 +296,7 @@ ORDER BY mention_count DESC;
 ```
 
 ### 3.6 Hybrid Semantic and Metadata Search
-Finds semantically similar notes across the whole vault (optional feature). The namespace is a ranking perspective, not a filter ([07-interface-contracts.md §4.1](07-interface-contracts.md#41-ranking)), so the only filter is the archive exclusion. It sits on a `vec0` metadata column, so it applies during the search, not after it (DR1-05). The query fetches more candidates than a result page holds, because the `ns` boost reorders them afterwards:
+Finds semantically similar notes across the whole vault (optional feature). The namespace is a ranking perspective, not a filter ([07-interface-contracts.md §4.1](07-interface-contracts.md#41-ranking)), so the only filter is the archive rule ([07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access)). It sits on a `vec0` metadata column, so it applies during the search, not after it (DR1-05). When `ns` is `archive`, the query runs without the archive line; a plain `!=` keeps the filter inside the nearest-neighbor search. The query fetches more candidates than a result page holds, because the `ns` boost reorders them afterwards:
 
 ```sql
 SELECT
@@ -309,9 +309,29 @@ FROM notes_vec v
 JOIN notes n ON n.pk = v.note_pk
 WHERE v.embedding MATCH ?1
   AND k = 50                                   -- candidates; the ns boost and paging pick the final 10
-  AND v.namespace != 'archive'                 -- archive only on explicit request
+  AND v.namespace != 'archive'                 -- dropped when ns is archive
 ORDER BY v.distance ASC;
 ```
+
+### 3.7 Full-Text Search (`search`)
+Ranks notes by BM25. Like §3.6, it fetches candidates, and the `ns` boost and paging pick the final page ([07-interface-contracts.md §4.1](07-interface-contracts.md#41-ranking)). The archive condition applies the store rules ([07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access)). Bootstrap notes have no full-text rows (§2.4), so they need no condition:
+
+```sql
+SELECT
+    n.path,
+    n.namespace,
+    n.title,
+    n.summary,
+    bm25(notes_fts) AS rank
+FROM notes_fts
+JOIN notes n ON n.pk = notes_fts.rowid
+WHERE notes_fts MATCH ?1
+  AND (n.namespace != 'archive' OR ?2 = 'archive')  -- ?2 is the ns key; NULL without ns
+ORDER BY rank                                        -- bm25(): lower is better
+LIMIT 50;                                            -- candidates; the ns boost and paging pick the final 10
+```
+
+The observation lines under each hit come from `observations_fts`. Bootstrap and archive notes have no observations (§2.3), so that query needs no store condition.
 
 ---
 

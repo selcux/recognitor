@@ -15,7 +15,7 @@ This document is the running log of design and architecture reviews for Recognit
 
 | Id | Date | Scope | Baseline commit | Score | Findings |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| [DR2](#dr2-2026-11-16-alignment-review-docs-01-07) | 2026-11-16 | Alignment review, docs 01-07 | `8512d2b` | 7/10 | 12 open, 1 resolved |
+| [DR2](#dr2-2026-11-16-alignment-review-docs-01-07) | 2026-11-16 | Alignment review, docs 01-07 | `8512d2b` | 7/10 | 10 open, 3 resolved |
 | [DR1](#dr1-2026-11-14-full-design-review-docs-01-05) | 2026-11-14 | Full design review, docs 01-05 | `9db3af1` | 6/10 | 16 resolved, closed 2026-11-15 |
 
 ---
@@ -251,9 +251,9 @@ Add the store access table from DR2-02 to doc 07 §1. One small table closes the
 | Id | Finding | Severity | Status |
 | :--- | :--- | :--- | :--- |
 | DR2-01 | "id" means both the spelled path and the lowercase key; doc 05 queries return keys and lack the order doc 07 promises | High | Resolved: id and key terms (doc 03 §4, doc 07 §6); `key` columns, queries return `path` in the promised order (doc 05 §2.1-2.3, §3); title compared by key (doc 07 §4.2) |
-| DR2-02 | Archive content leaks into normal search; doc 07 has no per-store rules (archive request, append only, `load_namespace("bootstrap")`) | High | Open |
+| DR2-02 | Archive content leaks into normal search; doc 07 has no per-store rules (archive request, append only, `load_namespace("bootstrap")`) | High | Resolved: store access table (doc 07 §1.1), linked from docs 02, 04 and 05; full-text query with the archive condition (doc 05 §3.7) |
 | DR2-03 | On a case-sensitive disk, a create or move can overwrite a twin or create one | High | Open |
-| DR2-04 | Bootstrap notice missing from `edit_note`, `relink` and `delete_note` in doc 07 (partial DR1-08 regression) | High | Open |
+| DR2-04 | Bootstrap notice missing from `edit_note`, `relink` and `delete_note` in doc 07 (partial DR1-08 regression) | High | Resolved: the store access table gives every write tool the bootstrap notice, and a move checks both stores (doc 07 §1.1) |
 | DR2-05 | Links stored only as written: ghosts and edges doubled by case, no filename index, full re-resolution on every add | High | Open |
 | DR2-06 | Doc 03 `INSERT` omits `title_key` (DR1-11 regression) | Medium | Open |
 | DR2-07 | `default` namespace: entry point unreachable, merges with a `default/` folder | Medium | Open |
