@@ -217,13 +217,33 @@ Gall's law      2 links
 - **The hint** is worked out when the command runs, so nothing is stored. It shows only when exactly one note has the ghost's filename (`notes.name_key`); for a shared name such as `index`, it shows nothing.
 - **Fix:** `recognitor relink` on the CLI, or `relink` through an agent (§6.1).
 
+### 6.3 Notes Named in Tool Calls
+
+A tool argument that names a note (`read_note`, `context`, `edit_note`, `move_note`, `relink`, `delete_note`) accepts an id, a path or a link name, matched by key. It resolves like a link ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)), but with steps 1, 2 and 4 only: a tool call has no linking note, so step 3 has no namespace to prefer.
+
+| Matches | Result |
+| :--- | :--- |
+| One | The tool runs |
+| Several | The tool runs on none of them and returns their ids; the agent calls again with one |
+| None | `not found` |
+
+```
+read_note("index")
+→ "index" matches 3 notes. Call again with one id:
+  common/index
+  compass/index
+  baseline/index
+```
+
+`compass::index` (step 2) or the id itself always matches one note.
+
 ---
 
 ## 7. `read_note(note, section?, query?)`
 
 Returns one note. Predictable by design: the content always comes from that one file.
 
-- **Input:** `note` (an id, path or link name, matched ignoring case, §6), optional `section` (a heading), optional `query` (used only when the note is too long, §7.2).
+- **Input:** `note` (an id, path or link name, §6.3), optional `section` (a heading), optional `query` (used only when the note is too long, §7.2).
 - **Output:** the whole file exactly as on disk, frontmatter included, so an overwrite built from it never loses tags or type. The tool adds one header line above it:
 
 ```
