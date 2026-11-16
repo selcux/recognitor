@@ -157,13 +157,13 @@ Recognitor follows the Obsidian model: a note's address is its path. It replaced
 
 - **Id = path:** a note's id is its path from the vault root without `.md` (`common/working-style/ADHD profile`). Output always shows it as written. The database stores its lowercase **key** instead ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)), and no output shows the key. Both come from the path, never from frontmatter, with no slug conversion, so nothing can drift, and Obsidian path links match without conversion.
 - **Kept as written, matched in lowercase:** links, tool arguments and namespaces match a lowercase key of the path ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)).
-- **ASCII names only:** every file and folder name is ASCII, so a key means the same on every platform. A non-ASCII name is handled like a case twin in the table below.
+- **ASCII names only:** every note and folder name is ASCII, so a key means the same on every platform. Other files (images, PDFs) are never indexed, so their names are not checked. A non-ASCII name is handled like a case twin in the table below.
 - **No case twins:** two paths with the same key are an error at any level, folders included (`common/ADHD profile.md` and `common/adhd profile.md`; `Baseline/` and `baseline/`). The same name in different folders is fine (every namespace has an `index.md`).
 
 | Where | What happens with a case twin or a non-ASCII name |
 | :--- | :--- |
 | `write_note`, `move_note` | Refused when the key already exists; the error returns the existing note. Refused when the path has a non-ASCII character. A new path reuses the spelling of folders that already exist (`Baseline/x.md` lands in `baseline/`) |
-| Files created outside Recognitor (Linux, git) | One or none: none of the twins is indexed. `sync` and `rebuild` print an error naming every twin, and `lint` fails. Twin folders leave out every note under both. A non-ASCII name is left out and reported the same way. The files stay on disk, and the first sweep after a rename indexes them |
+| Files created outside Recognitor (Linux, git) | One or none: none of the twins is indexed. `sync` and `rebuild` print a warning naming every twin and exit 0, so the rest of the vault stays indexed and usable; `lint` reports it as an error and fails. Twin folders leave out every note under both. A non-ASCII name is left out and reported the same way. The files stay on disk, and the first sweep after a rename indexes them |
 | A read, an edit or a link that hits the name | Treated as a note that does not exist: "not found", or a plain ghost. Twins never enter the system and nothing records them |
 | A create or a move onto the name | Refused, with the path of every twin: the check reads the disk, not the index (§5.1 step 2) |
 

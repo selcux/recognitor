@@ -105,7 +105,7 @@ Resolved in favor of lightweight **Structural Linting** plus optional **vault-wi
   4. Links resolve unambiguously; an ambiguous link stays a ghost with a warning.
   5. Summary paragraphs fit within 300 characters.
   6. A frontmatter `status: superseded` agrees with the `supersedes` edges.
-  7. Every file and folder name is ASCII, and no two paths share a lowercase key (case twins). Both are errors, and the files are not indexed.
+  7. Every note and folder name is ASCII, and no two paths share a lowercase key (case twins). Both are errors, and the files are not indexed.
   8. Spelling: an entry point not spelled `index.md`, and a Markdown link whose case differs from the file's, get a warning.
   9. Every namespace has an `index.md`; a namespace without one gets a warning.
 
