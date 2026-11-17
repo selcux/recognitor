@@ -64,12 +64,14 @@ Loads a namespace's entry point into the agent's context once. Replaces `enter_n
 
 ---
 
-## 4. `search(query, ns?)`
+## 4. `search(query, ns?, page?)`
 
 - **`ns` is a perspective, not a filter:** every knowledge note in the vault can match. Notes in `ns`, and notes linked from it, rank higher. Without `ns`, ranking is plain.
 - **Stores (§1.1):** bootstrap notes never match. Archive notes match only when `ns` is `archive`.
 - **Query:** [05-database-schema-specification.md §3.7](05-database-schema-specification.md#37-full-text-search-search).
+- **Query text:** the agent's text is never passed to FTS5 as query syntax, so no input can cause a syntax error. Each word is wrapped in double quotes, with a `"` inside a word doubled. Text the agent put in double quotes stays one phrase, and an unmatched `"` is ignored. The words are joined with AND. So `cost-of-change` matches the phrase "cost of change", and `c++` matches `c`. There are no operators (`OR`, `NOT`, `*`). A word with no letter or digit is dropped, because it has nothing to match. A query with no words left is refused with an error that says so.
 - **Responsibility:** the LLM passes the `ns` it got from `load_namespace`.
+- **Page:** `page` starts at 1 and defaults to 1. It is the number the "more" line names (§4.2), so the agent copies it as is. The CLI takes it as `--page <n>`.
 - **Boost values:** tuning parameters, set with the retrieval benchmark ([02-open-questions-and-tradeoffs.md §11](02-open-questions-and-tradeoffs.md#11-target-scale--benchmark-resolved)).
 
 ### 4.1 Ranking
@@ -78,7 +80,7 @@ Most relevant first. The score combines:
 
 | Part | Measures |
 | :--- | :--- |
-| Text match | SQLite FTS5 BM25 rank over the note and its observations |
+| Text match | SQLite FTS5 BM25 rank over the note's title, summary and text (`notes_fts`); observations count because they are part of the text |
 | `ns` boost | Notes in `ns`, and notes it links to, rank higher |
 | Vector similarity | Added once embeddings exist |
 
@@ -97,11 +99,13 @@ One block per hit:
 3 more: page 2
 ```
 
-- **Line 1:** the id. The title is added only when it differs from the filename by key, so `Index.md` titled `Index` shows no title.
+- **Line 1:** the id. The title is added only when it differs from the filename by key, so `Index.md` titled `Index` shows no title. It reads `baseline/Tools and sourcing, titled "Tools & sourcing"`. Every tool that shows a note's id adds a title this way (§8 too), so parentheses stay free for markers such as `(archive)`.
 - **Line 2:** the summary (at most 300 characters, [03-markdown-format-and-edge-syntax.md §2](03-markdown-format-and-edge-syntax.md#2-note-anatomy--layout)).
-- **Below:** up to 3 observation lines that matched the query.
-- **Paging:** 10 hits per page by default; the last line says how many more exist.
-- **Budget:** about 1,000 tokens at worst per page (estimate; measured by the benchmark).
+- **Below:** up to 3 observation lines that matched the query, best match first. Lines that contain every query word are shown; when none of the note's lines do, lines that contain any query word are shown instead. A line reads `- [category] @qualifier text`: the qualifier appears only when the fact has one, and tags stay in the text ([03-markdown-format-and-edge-syntax.md §2](03-markdown-format-and-edge-syntax.md#2-note-anatomy--layout)).
+- **Paging:** 10 hits per page by default; the last line says how many more exist. Hit numbers continue across pages, so page 2 starts at `11.`. The last page has no "more" line. A page past the end prints one line, `Page 3 is past the end: 13 results on 2 pages.`, as a normal result, not an error.
+- **Kept matches:** the query keeps the best 50 matches ([05-database-schema-specification.md §3.7](05-database-schema-specification.md#37-full-text-search-search)). When more notes match, every page ends by saying so, after its "more" line if it has one: `40 more: page 2. Only the best 50 of 3120 matches are kept; narrow the query to reach the rest.` The total is counted only when the query returns 50 rows.
+- **No hits:** one line, `No notes match "<query>".` When the query has more than one word, the line goes on: `Every word must match; try fewer words.` It is a normal result, not an error.
+- **Budget:** a page stays under 1,000 tokens (estimated as characters ÷ 4). Each fact line is cut at 200 characters, at a word boundary, and ends with `…`. Every hit on the page keeps its id and summary, and so do the closing lines. Fact lines are then added in rank order, the best hit's lines first, while the page stays under budget; once a line does not fit, the page gets no more fact lines. Both numbers are tuning parameters, set with the retrieval benchmark ([02-open-questions-and-tradeoffs.md §11](02-open-questions-and-tradeoffs.md#11-target-scale--benchmark-resolved)).
 
 ---
 
@@ -299,7 +303,7 @@ Links in:
 ```
 
 - **One level only, no `depth` argument:** to go further, the agent calls `context` again on a neighbor. The LLM decides where to jump (§1).
-- **Each link:** predicate, id, and summary. Ghosts are marked `(not written yet)`, archive notes `(archive)`.
+- **Each link:** predicate, id (with its title when it differs, as in §4.2), and summary. Ghosts are marked `(not written yet)`, archive notes `(archive)`.
 - **Order:** outgoing links in written order; incoming links most recently changed first.
 - **One fact, one line:** an inverse pair (`has_part` in A, `part_of` in B) is shown once.
 - **Stores (§1.1):** bootstrap notes are never listed ([05-database-schema-specification.md §3.3](05-database-schema-specification.md#33-two-stage-graph-discovery)). Archive notes are listed with their marker.
@@ -373,6 +377,9 @@ The CLI has no `write`, `edit` or `delete` commands. A human edits notes in an e
 | `move`, `relink` | A move needs the link check and `relink` (§6.1); a move made outside Recognitor needs `relink` alone (§6.2) |
 | `ghosts`, `lint [--strict]`, `trash empty` | Maintenance |
 | `sync`, `rebuild`, `config get/set` | Engine control |
+
+- **Which vault:** the `--vault <path>` flag, else the `RECOGNITOR_VAULT` environment variable, else `vault.path` in the config file. With none of them set, the command fails with an error that names all three. Sessions, hooks and the MCP server start in code repos, not in the vault, so the vault is never guessed from the current folder. The MCP server finds its vault the same way.
+- **Config file:** `config.toml` in the per-user local config folder, `ProjectDirs::config_local_dir()` from the `directories` crate (Windows: `%LOCALAPPDATA%\recognitor\config\config.toml`). Local, not roaming, because a vault path belongs to one machine. The `RECOGNITOR_CONFIG` environment variable points at another config file, for tests and portable setups. `config get/set` reads and writes it and keeps comments and unknown keys; keys follow the `section.name` style ([05-database-schema-specification.md §5](05-database-schema-specification.md#5-database-file-location)).
 
 `load_bootstrap` behaves as specified in [04-information-stores-and-lifecycle.md §2.2](04-information-stores-and-lifecycle.md#22-loading-load_bootstrap), failure output included; it keeps no state, so it needs no change for the stateless server.
 
