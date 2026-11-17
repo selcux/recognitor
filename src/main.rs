@@ -1,17 +1,19 @@
 //! `recognitor` CLI: a thin layer over the library. Commands are defined in doc 07 §12.
 //!
-//! Shadow mode builds `sync`, `rebuild`, `search` and `config get/set`. The vault comes from `--vault`, else
-//! `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
+//! Shadow mode builds `sync`, `rebuild`, `search`, `bootstrap` and `config get/set`. The vault comes from
+//! `--vault`, else `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use recognitor::bootstrap::DEFAULT_MAX_TOKENS;
 use recognitor::config::{self, VAULT_ENV};
 use recognitor::paths::DB_ENV;
 use recognitor::{Error, Index, SweepOptions, report};
 
 const USAGE: &str = "usage: recognitor <command> [--vault <path>] [--report]
        recognitor search <query> [--vault <path>] [--ns <namespace>] [--page <n>]
+       recognitor bootstrap [--list] [--vault <path>]
        recognitor config get <key>
        recognitor config set <key> <value>
 
@@ -19,16 +21,18 @@ commands:
   sync                      sweep the vault and index changed files
   rebuild                   drop the index and re-index the whole vault
   search <query>            full-text search
+  bootstrap                 print the bootstrap payload (the notes linked from bootstrap/index.md)
   config get <key>          print a config value
   config set <key> <value>  set a config value
 
-config keys: vault.path, db.path
+config keys: vault.path, db.path, bootstrap.max_tokens
 
 options:
   --vault <path>   vault root; else RECOGNITOR_VAULT, else vault.path in the config file
   --report         list every warning and print shadow-mode diagnostics
   --ns <name>      search: the namespace as a ranking perspective
   --page <n>       search: page number, from 1
+  --list           bootstrap: list the notes that load, in order, without their content
   -V, --version    print the version
 
 The database lives in the per-user cache directory; RECOGNITOR_DB or db.path in the config file overrides its path.";
@@ -46,6 +50,9 @@ enum Command {
         ns: Option<String>,
         page: usize,
     },
+    Bootstrap {
+        list: bool,
+    },
     Config(ConfigCommand),
 }
 
@@ -61,12 +68,14 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let mut report = false;
     let mut ns = None;
     let mut page = 1;
+    let mut list = false;
     let mut args = args;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--version" | "-V" => return Ok(None),
             "--vault" => vault = Some(PathBuf::from(args.next().ok_or("--vault needs a path")?)),
             "--report" => report = true,
+            "--list" => list = true,
             "--ns" => ns = Some(args.next().ok_or("--ns needs a namespace")?),
             "--page" => {
                 page = args
@@ -84,6 +93,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     if ns.is_some() && name != "search" {
         return Err("--ns belongs to search".to_string());
     }
+    if list && name != "bootstrap" {
+        return Err("--list belongs to bootstrap".to_string());
+    }
     let command = match (name.as_str(), rest.as_slice()) {
         ("sync", []) => Command::Sync,
         ("rebuild", []) => Command::Rebuild,
@@ -93,12 +105,15 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             ns,
             page,
         },
+        ("bootstrap", []) => Command::Bootstrap { list },
         ("config", [sub, key]) if sub == "get" => Command::Config(ConfigCommand::Get(key.clone())),
         ("config", [sub, key, value]) if sub == "set" => {
             Command::Config(ConfigCommand::Set(key.clone(), value.clone()))
         }
         ("config", _) => return Err("usage: config get <key> | config set <key> <value>".to_string()),
-        ("sync" | "rebuild" | "search", [extra, ..]) => return Err(format!("unexpected argument: {extra}")),
+        ("sync" | "rebuild" | "search" | "bootstrap", [extra, ..]) => {
+            return Err(format!("unexpected argument: {extra}"));
+        }
         (other, _) => return Err(format!("unknown command: {other}")),
     };
     if vault.is_some() && matches!(command, Command::Config(_)) {
@@ -147,6 +162,14 @@ fn run(args: &Args) -> recognitor::Result<String> {
             ns.as_deref(),
             *page,
         )?)),
+        Command::Bootstrap { list } => {
+            let bootstrap = index.bootstrap()?;
+            if *list {
+                return Ok(bootstrap.list());
+            }
+            let max_tokens = config::bootstrap_max_tokens(&config_file)?.unwrap_or(DEFAULT_MAX_TOKENS);
+            Ok(bootstrap.render(max_tokens))
+        }
         Command::Config(cmd) => run_config(cmd),
     }
 }

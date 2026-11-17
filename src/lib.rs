@@ -3,6 +3,7 @@
 //! Plain Markdown files in the vault are the source of truth. The SQLite database is a disposable projection of
 //! them. The design lives in `docs/`; doc 07 lists every interface this crate exposes.
 
+pub mod bootstrap;
 pub mod config;
 pub mod db;
 pub mod error;

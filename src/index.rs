@@ -256,6 +256,12 @@ impl Index {
         crate::search::search(&self.conn, query, ns, page)
     }
 
+    /// `recognitor bootstrap`: the stale-gated sweep (doc 02 §4), then the bootstrap walk (doc 04 §2.2).
+    pub fn bootstrap(&mut self) -> Result<crate::bootstrap::Bootstrap> {
+        self.sync_if_stale(SweepOptions::default())?;
+        crate::bootstrap::load(&self.conn)
+    }
+
     fn sweep<F: Fn(WalkPoint<'_>) + Sync>(
         &mut self,
         kind: SweepKind,

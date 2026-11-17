@@ -26,6 +26,10 @@ pub enum Error {
     Config { path: PathBuf, message: String },
     /// A search query with no words in it (doc 07 §4, "Query text").
     EmptyQuery,
+    /// `load_bootstrap` found no `bootstrap/index.md` in the index: no folder, no file, or a case twin that was left
+    /// out (doc 04 §2.2, "No entry point"). Its text is the one error line of the doc, without the `error: ` prefix
+    /// that the CLI adds.
+    NoBootstrap,
     /// The OS gave no per-user cache directory (doc 05 §5), and `RECOGNITOR_DB` is not set.
     NoCacheDir,
     /// The database file is not a Recognitor database. Nothing was changed.
@@ -80,8 +84,9 @@ impl fmt::Display for Error {
             Error::InvalidConfigValue { key, reason } => write!(f, "{key}: {reason}"),
             Error::ConfigNotSet(key) => write!(f, "{key} is not set"),
             Error::Config { path, message } => write!(f, "{}: {message}", path.display()),
-            // PLACEHOLDER wording: doc 07 §4 says only "an error that says so".
+            // Doc 07 §4 "Query text": a query with no words left is refused with an error that says so.
             Error::EmptyQuery => write!(f, "the search query is empty: give at least one word to search for"),
+            Error::NoBootstrap => write!(f, "bootstrap/index.md not found. Run `recognitor lint`."),
             Error::NoCacheDir => write!(f, "no per-user cache directory found; set RECOGNITOR_DB"),
             Error::ForeignDatabase(db) => write!(
                 f,
@@ -104,6 +109,7 @@ impl std::error::Error for Error {
             Error::Sql(e) => Some(e),
             Error::Vault(_)
             | Error::EmptyQuery
+            | Error::NoBootstrap
             | Error::NoCacheDir
             | Error::NoConfigDir
             | Error::NoVault { .. }

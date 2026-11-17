@@ -249,7 +249,7 @@ fn vault_path_is_checked_and_stored_as_given() {
 #[test]
 fn an_unknown_key_lists_the_known_ones() {
     let t = Temp::new();
-    assert_eq!(KEYS, ["vault.path", "db.path"]);
+    assert_eq!(KEYS, ["vault.path", "db.path", "bootstrap.max_tokens"]);
     for result in [
         config::get(&t.config(), "vault.pth").map(|_| ()),
         config::set(&t.config(), "read.max_tokens", "9"),
@@ -258,7 +258,10 @@ fn an_unknown_key_lists_the_known_ones() {
         assert!(matches!(err, Error::UnknownConfigKey(_)));
         assert!(err.is_usage());
         let text = err.to_string();
-        assert!(text.contains("vault.path") && text.contains("db.path"), "{text}");
+        assert!(
+            text.contains("vault.path") && text.contains("db.path") && text.contains("bootstrap.max_tokens"),
+            "{text}"
+        );
     }
     assert!(!t.config().exists());
 }
