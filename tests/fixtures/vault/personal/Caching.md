@@ -1,0 +1,3 @@
+# Caching
+
+Personal caching habits.

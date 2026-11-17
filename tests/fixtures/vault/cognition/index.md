@@ -1,0 +1,3 @@
+# Cognition
+
+How thinking works.
