@@ -20,7 +20,7 @@ use crate::paths::{
     namespace_of_key, note_id, note_key, same_vault_root,
 };
 use crate::resolve::{Resolution, Step, link_key, names_of, resolve};
-use crate::walk::{FileEntry, NameError, WalkStats, Walked, walk};
+use crate::walk::{FileEntry, NameError, WalkPoint, WalkStats, Walked, walk_with_hook};
 
 /// TTL gate: a sweep is skipped when the last one finished less than this long ago (doc 02 §4).
 pub const SWEEP_TTL_MS: i64 = 2000;
@@ -217,19 +217,24 @@ impl Index {
 
     /// `recognitor rebuild`: drop every table and re-index the whole vault.
     pub fn rebuild(&mut self, opts: SweepOptions) -> Result<SweepReport> {
-        self.sweep(SweepKind::Rebuild, opts, &|p| fs::read(p))
+        self.sweep(SweepKind::Rebuild, opts, &|p| fs::read(p), &mut |_| {})
     }
 
     /// `recognitor sync`: a forced stat sweep, ignoring the TTL gate.
     pub fn sync(&mut self, opts: SweepOptions) -> Result<SweepReport> {
-        self.sweep(SweepKind::Sync, opts, &|p| fs::read(p))
+        self.sweep(SweepKind::Sync, opts, &|p| fs::read(p), &mut |_| {})
     }
 
-    /// [`Index::sync`] with the file reader replaced. A test seam for files that vanish or lock between the walk and
-    /// the read, which no test can time on a real file system.
+    /// [`Index::sync`] with the file reader replaced and a hook in the walk. A test seam for files that vanish or lock
+    /// between the walk and the read, or during the walk, which no test can time on a real file system.
     #[doc(hidden)]
-    pub fn sync_with_reader(&mut self, opts: SweepOptions, read: &FileReader<'_>) -> Result<SweepReport> {
-        self.sweep(SweepKind::Sync, opts, read)
+    pub fn sync_with_seams<F: FnMut(WalkPoint<'_>)>(
+        &mut self,
+        opts: SweepOptions,
+        read: &FileReader<'_>,
+        hook: &mut F,
+    ) -> Result<SweepReport> {
+        self.sweep(SweepKind::Sync, opts, read, hook)
     }
 
     /// The sweep queries run before they read the index: skipped when another process swept less than 2 seconds
@@ -241,10 +246,17 @@ impl Index {
                 return Ok(None);
             }
         }
-        self.sweep(SweepKind::Sync, opts, &|p| fs::read(p)).map(Some)
+        self.sweep(SweepKind::Sync, opts, &|p| fs::read(p), &mut |_| {})
+            .map(Some)
     }
 
-    fn sweep(&mut self, kind: SweepKind, opts: SweepOptions, read: &FileReader<'_>) -> Result<SweepReport> {
+    fn sweep<F: FnMut(WalkPoint<'_>)>(
+        &mut self,
+        kind: SweepKind,
+        opts: SweepOptions,
+        read: &FileReader<'_>,
+        hook: &mut F,
+    ) -> Result<SweepReport> {
         let timer = Instant::now();
         let root = self.root.clone();
         let root_display = self.root_display.clone();
@@ -290,7 +302,7 @@ impl Index {
             }
             break (tx, full);
         };
-        let result = run_sweep(tx, &root, &root_display, kind, full, opts, read);
+        let result = run_sweep(tx, &root, &root_display, kind, full, opts, read, hook);
         let elapsed = timer.elapsed();
         let (mut report, counters, walk_stats) = result?;
         report.elapsed = elapsed;
@@ -406,7 +418,8 @@ impl Index {
 }
 
 /// The sweep proper, inside the transaction `tx` that already holds the write lock.
-fn run_sweep(
+#[allow(clippy::too_many_arguments)]
+fn run_sweep<F: FnMut(WalkPoint<'_>)>(
     tx: Transaction<'_>,
     root: &Path,
     root_display: &str,
@@ -414,6 +427,7 @@ fn run_sweep(
     full: Option<FullCause>,
     opts: SweepOptions,
     read: &FileReader<'_>,
+    hook: &mut F,
 ) -> Result<(SweepReport, Counters, WalkStats)> {
     let start_ms = now_ms();
     if full.is_some() {
@@ -429,7 +443,7 @@ fn run_sweep(
         name_errors,
         unreadable,
         stats: walk_stats,
-    } = walk(root, opts.report)?;
+    } = walk_with_hook(root, opts.report, hook)?;
 
     let mut report = SweepReport {
         kind,

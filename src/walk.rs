@@ -111,8 +111,24 @@ pub fn classify(entries: &[(String, EntryKind)]) -> Verdicts {
 /// Walks `root` and returns every `*.md` file under a top-level folder that is outside hidden folders and passes the
 /// name rules, sorted by path.
 pub fn walk(root: &Path, count_hidden: bool) -> Result<Walked> {
+    walk_with_hook(root, count_hidden, &mut |_| {})
+}
+
+/// A moment in the walk where a test can change the file system. Production passes a no-op hook.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub enum WalkPoint<'a> {
+    /// Right before the metadata of a listed `.md` file is read.
+    BeforeStat(&'a Path),
+    /// Right before the walk lists a subfolder.
+    BeforeDescend(&'a Path),
+}
+
+/// [`walk`] with a hook called at each [`WalkPoint`]. Generic, so the no-op hook of `walk` costs nothing.
+#[doc(hidden)]
+pub fn walk_with_hook<F: FnMut(WalkPoint<'_>)>(root: &Path, count_hidden: bool, hook: &mut F) -> Result<Walked> {
     let mut walked = Walked::default();
-    walk_dir(root, "", &mut walked)?;
+    walk_dir(root, "", &mut walked, hook)?;
     if count_hidden {
         let mut n = 0;
         for rel in &walked.stats.hidden_dirs {
@@ -134,7 +150,7 @@ struct Pending {
     stat: (i64, i64),
 }
 
-fn walk_dir(dir: &Path, rel_dir: &str, walked: &mut Walked) -> Result<()> {
+fn walk_dir<F: FnMut(WalkPoint<'_>)>(dir: &Path, rel_dir: &str, walked: &mut Walked, hook: &mut F) -> Result<()> {
     let at_root = rel_dir.is_empty();
     let mut pending: Vec<Pending> = Vec::new();
     let entries = match fs::read_dir(dir) {
@@ -174,6 +190,9 @@ fn walk_dir(dir: &Path, rel_dir: &str, walked: &mut Walked) -> Result<()> {
             match strip_md_ignore_case(&name) {
                 Some(stem) if !stem.is_empty() && at_root => walked.stats.root_md_files += 1,
                 Some(stem) if !stem.is_empty() => {
+                    // Built once and reused below, so the hook adds no allocation in production.
+                    let path = entry.path();
+                    hook(WalkPoint::BeforeStat(&path));
                     let meta = match entry.metadata() {
                         Ok(m) => m,
                         // Deleted or renamed away since the listing: it is not there any more.
@@ -187,7 +206,7 @@ fn walk_dir(dir: &Path, rel_dir: &str, walked: &mut Walked) -> Result<()> {
                     pending.push(Pending {
                         name,
                         kind: EntryKind::MdFile,
-                        path: entry.path(),
+                        path,
                         stat: (mtime_ms(&meta), i64::try_from(meta.len()).unwrap_or(i64::MAX)),
                     });
                 }
@@ -236,7 +255,10 @@ fn walk_dir(dir: &Path, rel_dir: &str, walked: &mut Walked) -> Result<()> {
         }
         let rel = join_rel(rel_dir, &p.name);
         match p.kind {
-            EntryKind::Dir => walk_dir(&p.path, &rel, walked)?,
+            EntryKind::Dir => {
+                hook(WalkPoint::BeforeDescend(&p.path));
+                walk_dir(&p.path, &rel, walked, hook)?;
+            }
             EntryKind::MdFile => walked.files.push(FileEntry {
                 key: note_key(&rel),
                 rel,
@@ -304,6 +326,58 @@ pub fn mtime_ms(meta: &fs::Metadata) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    /// A fresh folder under the temp dir, removed when the guard drops, pass or fail.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+            let dir = std::env::temp_dir().join(format!("recognitor-test-{}-{n}-{name}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            // Test setup: a failure here fails the test.
+            fs::create_dir_all(&dir).expect("create the temp folder");
+            TempDir(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_folder_removed_before_it_is_listed_is_skipped() {
+        let tmp = TempDir::new("walk-folder-vanishes");
+        let root = tmp.0.join("vault");
+        for rel in ["keep/a.md", "gone/b.md", "gone/deep/c.md", "other/d.md"] {
+            let p = root.join(rel);
+            fs::create_dir_all(p.parent().expect("every path has a parent")).expect("create folder");
+            fs::write(
+                &p, "# x
+",
+            )
+            .expect("write file");
+        }
+        let mut fired = Vec::new();
+        let walked = walk_with_hook(&root, false, &mut |point| {
+            if let WalkPoint::BeforeDescend(dir) = point {
+                fired.push(dir.to_path_buf());
+                if dir.ends_with("gone") {
+                    fs::remove_dir_all(dir).expect("remove the folder");
+                }
+            }
+        })
+        .expect("the walk survives a vanished folder");
+        let rels: Vec<&str> = walked.files.iter().map(|f| f.rel.as_str()).collect();
+        assert_eq!(rels, ["keep/a.md", "other/d.md"]);
+        assert!(fired.iter().any(|d| d.ends_with("gone")), "the hook saw the folder");
+        assert!(walked.name_errors.is_empty() && walked.unreadable.is_empty());
+    }
 
     fn entries(list: &[(&str, EntryKind)]) -> Vec<(String, EntryKind)> {
         list.iter().map(|(n, k)| (n.to_string(), *k)).collect()

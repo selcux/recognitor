@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use recognitor::db::{self, meta_keys};
 use recognitor::index::FullCause;
 use recognitor::parse::WarningKind;
-use recognitor::walk::{NameError, NameErrorKind};
+use recognitor::walk::{NameError, NameErrorKind, WalkPoint};
 use recognitor::{Index, SweepOptions, SweepReport};
 use rusqlite::OptionalExtension;
 
@@ -1426,13 +1426,17 @@ fn a_file_gone_after_the_walk_counts_as_deleted() {
     v.write("ops/index.md", "# Ops\n\nOperations notes, edited.\n", 100);
     v.write("ops/Deploy Checklist.md", "# Deploy Checklist\n\nEdited.\n", 100);
     let r = index
-        .sync_with_reader(opts(), &|p| {
-            if p.ends_with("ops/index.md") {
-                Err(std::io::Error::from(std::io::ErrorKind::NotFound))
-            } else {
-                fs::read(p)
-            }
-        })
+        .sync_with_seams(
+            opts(),
+            &|p| {
+                if p.ends_with("ops/index.md") {
+                    Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+                } else {
+                    fs::read(p)
+                }
+            },
+            &mut |_| {},
+        )
         .unwrap();
     assert_eq!(r.deleted, vec!["ops/index".to_string()]);
     assert_eq!(
@@ -1452,13 +1456,17 @@ fn an_unreadable_file_is_skipped_with_a_warning() {
     v.write("ops/index.md", "# Ops\n\nOperations notes, edited.\n", 100);
     v.write("ops/Deploy Checklist.md", "# Deploy Checklist\n\nEdited.\n", 100);
     let r = index
-        .sync_with_reader(opts(), &|p| {
-            if p.ends_with("ops/index.md") {
-                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
-            } else {
-                fs::read(p)
-            }
-        })
+        .sync_with_seams(
+            opts(),
+            &|p| {
+                if p.ends_with("ops/index.md") {
+                    Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                } else {
+                    fs::read(p)
+                }
+            },
+            &mut |_| {},
+        )
         .unwrap();
     assert_eq!(warning_kinds(&r), vec![WarningKind::Unreadable]);
     assert_eq!(r.warnings[0].note, "ops/index");
@@ -1487,6 +1495,96 @@ fn a_file_locked_by_another_process_is_skipped_with_a_warning() {
     let r = index.sync(opts()).unwrap();
     assert_eq!(warning_kinds(&r), vec![WarningKind::Unreadable]);
     assert_eq!(r.totals.notes, 13);
+}
+
+/// A small vault of its own: three notes in `docs/`, one of them `docs/doomed.md`.
+fn vanish_vault(name: &str) -> TestVault {
+    let v = TestVault::new(name);
+    v.write(
+        "docs/alpha.md",
+        "# Alpha
+
+First note.
+",
+        0,
+    );
+    v.write(
+        "docs/beta.md",
+        "# Beta
+
+Second note.
+",
+        0,
+    );
+    v.write(
+        "docs/doomed.md",
+        "# Doomed
+
+This one vanishes.
+",
+        0,
+    );
+    v
+}
+
+/// Deletes `docs/doomed.md` the moment the walk is about to stat it. Returns how often the hook fired for it.
+fn vanish_at_stat(fired: &mut usize) -> impl FnMut(WalkPoint<'_>) {
+    move |point| {
+        // `ends_with`, not `==`: the index may hold the vault root in another spelling than the test's.
+        if let WalkPoint::BeforeStat(p) = point
+            && p.ends_with("docs/doomed.md")
+        {
+            *fired += 1;
+            let _ = fs::remove_file(p);
+        }
+    }
+}
+
+#[test]
+fn a_file_that_vanishes_during_the_walk_is_never_indexed() {
+    let v = vanish_vault("vanish-new");
+    let mut index = v.open();
+    let mut fired = 0;
+    let r = index
+        .sync_with_seams(opts(), &|p| fs::read(p), &mut vanish_at_stat(&mut fired))
+        .unwrap();
+    assert_eq!(fired, 1, "the hook saw the file");
+    assert_eq!(
+        note_keys(&index),
+        vec!["docs/alpha".to_string(), "docs/beta".to_string()]
+    );
+    assert_eq!(r.totals.notes, 2);
+    assert!(r.deleted.is_empty(), "it was never indexed, so nothing was deleted");
+    assert!(r.warnings.is_empty());
+}
+
+#[test]
+fn an_indexed_file_that_vanishes_during_the_walk_counts_as_deleted() {
+    let v = vanish_vault("vanish-known");
+    let mut index = v.open();
+    index.rebuild(opts()).unwrap();
+    assert_eq!(count(&index, "SELECT COUNT(*) FROM notes"), 3);
+    // An edit makes the file dirty, so the sweep needs it; the hook removes it before the walk stats it.
+    v.write(
+        "docs/doomed.md",
+        "# Doomed
+
+Edited, then gone.
+",
+        100,
+    );
+    let mut fired = 0;
+    let r = index
+        .sync_with_seams(opts(), &|p| fs::read(p), &mut vanish_at_stat(&mut fired))
+        .unwrap();
+    assert_eq!(fired, 1);
+    assert_eq!(r.deleted, vec!["docs/doomed".to_string()]);
+    assert_eq!(
+        note_keys(&index),
+        vec!["docs/alpha".to_string(), "docs/beta".to_string()]
+    );
+    assert_eq!(r.totals.notes, 2);
+    assert!(r.warnings.is_empty());
 }
 
 fn make_foreign_db(path: &Path, user_version: i64) {
