@@ -232,7 +232,7 @@ FROM edges e
 LEFT JOIN notes n ON n.key = e.target_key
 WHERE e.source_key = ?1
   AND e.is_inline = 0                                      -- ## Relations links only
-  AND e.predicate != 'supersedes'                          -- never load a retired version
+  AND lower(e.predicate) IN ('indexes', 'has_part')        -- only the words that point down a tree
   AND (n.namespace = 'bootstrap' OR e.target_key IS NULL)  -- never leave the bootstrap
 ORDER BY e.position;
 ```

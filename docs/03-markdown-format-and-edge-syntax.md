@@ -95,13 +95,14 @@ Recognitor supports an **open vocabulary** for predicates in SQLite (`predicate 
 
 | Class | Predicates | Engine Behavior |
 | :--- | :--- | :--- |
-| **Hierarchical** | `part_of`, `has_part`, `indexes` | Handled via recursive SQL CTEs to collapse or expand subtrees, modules, and namespaces. Inverse direction automatically flips (`part_of` <-> `has_part`) in graph queries; bootstrap loading follows the written direction only. Both directions are stored as written, and graph queries treat `A has_part B` plus `B part_of A` as one fact. |
+| **Hierarchical** | `part_of`, `has_part`, `indexes` | Handled via recursive SQL CTEs to collapse or expand subtrees, modules, and namespaces. Inverse direction automatically flips (`part_of` <-> `has_part`) in graph queries; bootstrap loading follows only `indexes` and `has_part`, in the written direction ([04-information-stores-and-lifecycle.md §2.2](04-information-stores-and-lifecycle.md#22-loading-load_bootstrap)). Both directions are stored as written, and graph queries treat `A has_part B` plus `B part_of A` as one fact. |
 | **Lifecycle & Invalidation** | `supersedes` | Traversal algorithms recognize superseded notes as historical, automatically deprioritizing or excluding them from prompt retrieval. `load_bootstrap()` never follows them. The `supersedes` edge is the only source of truth for "superseded": lint flags a frontmatter `status: superseded` that no edge confirms, and an edge whose target says otherwise. |
 | **Lateral & Associative** | `relates_to`, `depends_on`, `implements`, etc. | Relational edges with weights computed at query time ([02 §6](02-open-questions-and-tradeoffs.md)), used in graph walks (Personalized PageRank, shortest paths). |
 
 ### Tier 2: Generic Inline Mentions
 
 Casual links scattered inside the note body or prose (`...as discussed in [[Rate Limiting]]...`) are automatically detected by the parser.
+
 - **Engine Handling:** Inline links are indexed in SQLite with the default predicate `links_to`.
 - **Purpose:** Preserves serendipitous connections across notes without forcing the user to assign semantic weight or pollute prose with metadata keys.
 

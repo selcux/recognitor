@@ -63,11 +63,11 @@ bootstrap/
 The bootstrap is loaded as a tree, starting from `index.md` and following links in one direction:
 
 1. Load `bootstrap/index.md`.
-2. Follow its `## Relations` links depth-first, in the order they are written (`edges.position`).
+2. Follow its `## Relations` links whose relation word is `indexes` or `has_part`, the words that point down a tree (compared in lowercase, so `Has_Part` counts), depth-first, in the order they are written (`edges.position`).
 3. Load every note reached, then follow its links the same way.
 4. Never follow:
+   - any other relation word: `relates_to`, `supersedes` (a retired version), `part_of` and the rest. A bootstrap note can cross-reference another note without loading it;
    - inline `[[mentions]]` in prose, and lines under `## Relations` without a relation word (`- [[Mentor]]`), which count as plain links ([03-markdown-format-and-edge-syntax.md §3](03-markdown-format-and-edge-syntax.md#3-graph-edge-syntax)). The payload does not mention them; `sync` warns and `lint` reports them;
-   - `supersedes` links, which point at a retired version;
    - links in the reverse direction: a `part_of` written in the target note is not an edge out of the source;
    - links that leave the bootstrap;
    - ghost links, and notes already visited.
