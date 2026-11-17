@@ -200,14 +200,14 @@ fn rebuild_indexes_the_fixture_vault() {
     let r = index.rebuild(opts()).unwrap();
     assert_eq!(r.full, Some(FullCause::Requested));
     assert_eq!(
-        r.files_seen, 13,
+        r.files_seen, 14,
         "hidden folders, non-.md files and root files are skipped (doc 03 §4)"
     );
-    assert_eq!(r.files_read, 13);
-    assert_eq!(r.totals.notes, 13);
+    assert_eq!(r.files_read, 14);
+    assert_eq!(r.totals.notes, 14);
     assert_eq!(r.totals.observations, 5);
-    assert_eq!(r.totals.edges, 12);
-    assert_eq!(r.totals.typed_edges, 9);
+    assert_eq!(r.totals.edges, 13);
+    assert_eq!(r.totals.typed_edges, 10);
     assert_eq!(r.totals.ghosts, 5);
     assert_eq!(warning_kinds(&r), vec![WarningKind::AmbiguousLink]);
     assert!(r.name_errors.is_empty());
@@ -363,8 +363,13 @@ fn bootstrap_and_archive_rules() {
     let mut index = v.open();
     index.rebuild(opts()).unwrap();
     // Bootstrap: edges kept and resolved inside the bootstrap, no observations, no full-text rows (doc 05 §2.3-2.4).
+    // The fixture's bootstrap is a small tree: index -> Profile (hub) -> Identity.
     assert_eq!(
-        target_of(&index, "bootstrap/index", "loads", "identity"),
+        target_of(&index, "bootstrap/index", "indexes", "profile"),
+        some("bootstrap/profile/profile")
+    );
+    assert_eq!(
+        target_of(&index, "bootstrap/profile/profile", "has_part", "identity"),
         some("bootstrap/profile/identity")
     );
     assert_eq!(
@@ -612,7 +617,7 @@ fn files_in_the_vault_root_are_not_notes() {
     );
     let mut index = v.open();
     let r = index.rebuild(opts()).unwrap();
-    assert_eq!(r.files_seen, 14, "13 fixture notes plus Links Root; no root file");
+    assert_eq!(r.files_seen, 15, "14 fixture notes plus Links Root; no root file");
     assert!(r.name_errors.is_empty(), "a root file is not an error either");
     assert_eq!(
         count(
@@ -916,7 +921,7 @@ fn second_sync_with_no_changes_reads_no_files() {
     index.rebuild(opts()).unwrap();
     let r = index.sync(opts()).unwrap();
     assert_eq!(r.full, None);
-    assert_eq!(r.files_seen, 13);
+    assert_eq!(r.files_seen, 14);
     assert_eq!(r.files_read, 0);
     assert!(r.added.is_empty() && r.changed.is_empty() && r.deleted.is_empty() && r.renamed.is_empty());
     assert_eq!(r.reresolved, 0);
@@ -927,7 +932,7 @@ fn first_sync_on_a_fresh_database_indexes_everything() {
     let v = TestVault::fixture("fresh");
     let r = v.open().sync(opts()).unwrap();
     assert_eq!(r.full, Some(FullCause::FreshDatabase));
-    assert_eq!(r.totals.notes, 13);
+    assert_eq!(r.totals.notes, 14);
 }
 
 #[test]
@@ -1035,7 +1040,7 @@ fn case_only_rename_of_a_folder_keeps_the_namespace() {
         2,
         "the namespace is the lowercase key"
     );
-    assert_eq!(r.totals.notes, 13);
+    assert_eq!(r.totals.notes, 14);
 }
 
 #[test]
@@ -1307,7 +1312,7 @@ fn schema_version_mismatch_rebuilds() {
     index.connection().pragma_update(None, "user_version", 99).unwrap();
     let r = index.sync(opts()).unwrap();
     assert_eq!(r.full, Some(FullCause::SchemaVersion(99)));
-    assert_eq!(r.totals.notes, 13);
+    assert_eq!(r.totals.notes, 14);
     assert_eq!(db::schema_state(index.connection()).unwrap(), db::SchemaState::Current);
 }
 
@@ -1391,7 +1396,8 @@ fn cli_rebuild_then_sync() {
     };
     let rebuild = run("rebuild");
     assert!(
-        rebuild.starts_with("rebuild: 13 notes, 5 observations, 12 edges (9 typed, 3 inline, 5 ghosts); read 13 of 13"),
+        rebuild
+            .starts_with("rebuild: 14 notes, 5 observations, 13 edges (10 typed, 3 inline, 5 ghosts); read 14 of 14"),
         "{rebuild}"
     );
     // A non-ASCII name is an error line naming the path (doc 03 §4, doc 07 §6).
@@ -1401,7 +1407,7 @@ fn cli_rebuild_then_sync() {
     );
     let sync = run("sync");
     assert!(
-        sync.starts_with("sync: 13 notes") && sync.contains("read 0 of 13 files"),
+        sync.starts_with("sync: 14 notes") && sync.contains("read 0 of 14 files"),
         "{sync}"
     );
     assert!(sync.contains("warning: non-ASCII name"), "{sync}");
@@ -1445,7 +1451,7 @@ fn a_file_gone_after_the_walk_counts_as_deleted() {
         vec!["ops/Deploy Checklist".to_string()],
         "the rest of the sweep committed"
     );
-    assert_eq!(r.totals.notes, 12);
+    assert_eq!(r.totals.notes, 13);
     assert_eq!(count(&index, "SELECT COUNT(*) FROM notes WHERE key = 'ops/index'"), 0);
 }
 
@@ -1473,7 +1479,7 @@ fn an_unreadable_file_is_skipped_with_a_warning() {
     assert_eq!(r.warnings[0].note, "ops/index");
     assert!(r.deleted.is_empty());
     assert_eq!(r.changed, vec!["ops/Deploy Checklist".to_string()]);
-    assert_eq!(r.totals.notes, 13, "the stored note is kept");
+    assert_eq!(r.totals.notes, 14, "the stored note is kept");
     // The next sweep retries it: its stored mtime was not updated.
     let r = index.sync(opts()).unwrap();
     assert_eq!(r.changed, vec!["ops/index".to_string()]);
@@ -1495,7 +1501,7 @@ fn a_file_locked_by_another_process_is_skipped_with_a_warning() {
         .unwrap();
     let r = index.sync(opts()).unwrap();
     assert_eq!(warning_kinds(&r), vec![WarningKind::Unreadable]);
-    assert_eq!(r.totals.notes, 13);
+    assert_eq!(r.totals.notes, 14);
 }
 
 /// A small vault of its own: three notes in `docs/`, one of them `docs/doomed.md`.
@@ -1633,7 +1639,7 @@ fn a_database_of_another_vault_is_refused() {
         }
         .unwrap_err();
         assert!(matches!(err, recognitor::Error::VaultMismatch { .. }), "{err}");
-        assert_eq!(count(&other, "SELECT COUNT(*) FROM notes"), 13, "nothing was dropped");
+        assert_eq!(count(&other, "SELECT COUNT(*) FROM notes"), 14, "nothing was dropped");
     }
     // The owner still syncs.
     let mut owner = a.open();
@@ -1659,7 +1665,7 @@ fn the_schema_state_is_decided_after_the_lock() {
         r.full, None,
         "the queued sweep saw a current database, not an empty one"
     );
-    assert_eq!(r.added.len(), 13);
+    assert_eq!(r.added.len(), 14);
 }
 
 #[test]
@@ -1711,7 +1717,7 @@ fn a_database_with_a_module_that_is_not_loaded_is_rebuilt() {
     assert_eq!(count(&index, vec_tables), 1, "the setup left a table without a module");
     let r = index.sync(opts()).unwrap();
     assert_eq!(r.full, Some(FullCause::SchemaVersion(99)));
-    assert_eq!(r.totals.notes, 13);
+    assert_eq!(r.totals.notes, 14);
     assert_eq!(count(&index, vec_tables), 0);
 }
 

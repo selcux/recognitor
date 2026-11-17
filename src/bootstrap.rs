@@ -107,8 +107,9 @@ struct Link {
     target_ref: String,
 }
 
-/// Doc 05 §3.1, as written: a note's outgoing `## Relations` links in written order. A link that leaves the
-/// bootstrap, and a `supersedes` link, are not in the result; a ghost is, with `target_key` unset.
+/// Doc 05 §3.1, as written: a note's outgoing `## Relations` links in written order, for the two relation words
+/// that point down a tree, `indexes` and `has_part`, in any case (doc 04 §2.2 steps 2 and 4). A link with another
+/// word, and a link that leaves the bootstrap, are not in the result; a ghost is, with `target_key` unset.
 fn links_out(conn: &Connection, source_key: &str) -> Result<Vec<Link>> {
     let mut stmt = conn.prepare_cached(
         "SELECT e.target_key, e.target_ref \
@@ -116,7 +117,7 @@ fn links_out(conn: &Connection, source_key: &str) -> Result<Vec<Link>> {
          LEFT JOIN notes n ON n.key = e.target_key \
          WHERE e.source_key = ?1 \
            AND e.is_inline = 0 \
-           AND e.predicate != 'supersedes' \
+           AND lower(e.predicate) IN ('indexes', 'has_part') \
            AND (n.namespace = 'bootstrap' OR e.target_key IS NULL) \
          ORDER BY e.position",
     )?;

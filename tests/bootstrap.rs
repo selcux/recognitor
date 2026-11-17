@@ -132,7 +132,7 @@ fn layout_vault() -> TestVault {
         ("bootstrap/profile/Profile.md", &note("Profile", "Works alone.\n")),
         (
             "bootstrap/behavior/Style.md",
-            &note("Style", "## Relations\n- uses [[Mentor]]\n"),
+            &note("Style", "## Relations\n- has_part [[Mentor]]\n"),
         ),
         ("bootstrap/behavior/personas/Mentor.md", &note("Mentor", "Patient.\n")),
         ("bootstrap/behavior/personas/Critic.md", &note("Critic", "Sharp.\n")),
@@ -169,7 +169,7 @@ fn switching_persona_means_editing_one_link() {
     let v = layout_vault();
     v.write(
         "bootstrap/behavior/Style.md",
-        &note("Style", "## Relations\n- uses [[Critic]]\n"),
+        &note("Style", "## Relations\n- has_part [[Critic]]\n"),
     );
     let ids_now: Vec<String> = v.walk().notes.iter().map(|n| n.id.clone()).collect();
     assert!(ids_now.contains(&"bootstrap/behavior/personas/Critic".to_string()));
@@ -184,7 +184,7 @@ fn links_follow_the_order_they_are_written() {
             "bootstrap/index.md",
             &note(
                 "Bootstrap",
-                "## Relations\n- has_part [[Zeta]]\n- relates_to [[Alpha]]\n- has_part [[Mid]]\n",
+                "## Relations\n- has_part [[Zeta]]\n- indexes [[Alpha]]\n- has_part [[Mid]]\n",
             ),
         ),
         ("bootstrap/Alpha.md", &note("Alpha", "")),
@@ -237,9 +237,9 @@ fn a_cycle_loads_each_note_once() {
         ),
         (
             "bootstrap/A.md",
-            &note("A", "## Relations\n- relates_to [[B]]\n- part_of [[index]]\n"),
+            &note("A", "## Relations\n- has_part [[B]]\n- has_part [[index]]\n"),
         ),
-        ("bootstrap/B.md", &note("B", "## Relations\n- relates_to [[A]]\n")),
+        ("bootstrap/B.md", &note("B", "## Relations\n- has_part [[A]]\n")),
     ]);
     assert_eq!(ids(&v.walk()), ["bootstrap/index", "bootstrap/A", "bootstrap/B"]);
 }
@@ -250,14 +250,14 @@ fn a_self_link_is_harmless() {
     let v = TestVault::new(&[
         (
             "bootstrap/index.md",
-            &note("Bootstrap", "## Relations\n- relates_to [[index]]\n- has_part [[A]]\n"),
+            &note("Bootstrap", "## Relations\n- has_part [[index]]\n- has_part [[A]]\n"),
         ),
-        ("bootstrap/A.md", &note("A", "## Relations\n- relates_to [[A]]\n")),
+        ("bootstrap/A.md", &note("A", "## Relations\n- has_part [[A]]\n")),
     ]);
     assert_eq!(ids(&v.walk()), ["bootstrap/index", "bootstrap/A"]);
 }
 
-/// Step 4, first bullet: inline `[[mentions]]` in prose are never followed, not even in the index.
+/// Step 4, second bullet: inline `[[mentions]]` in prose are never followed, not even in the index.
 #[test]
 fn inline_mentions_are_not_followed() {
     let v = TestVault::new(&[
@@ -274,8 +274,8 @@ fn inline_mentions_are_not_followed() {
     assert_eq!(ids(&v.walk()), ["bootstrap/index"]);
 }
 
-/// Step 4, second bullet: a `supersedes` link points at a retired version, which does not load. Every other
-/// predicate does, whatever its name.
+/// Step 4, first bullet: a `supersedes` link points at a retired version, which does not load, while a `has_part`
+/// link next to it does.
 #[test]
 fn supersedes_links_are_not_followed() {
     let v = TestVault::new(&[
@@ -283,13 +283,109 @@ fn supersedes_links_are_not_followed() {
             "bootstrap/index.md",
             &note(
                 "Bootstrap",
-                "## Relations\n- supersedes [[Old rules]] (replaced in 2026)\n- depends_on [[New rules]]\n",
+                "## Relations\n- supersedes [[Old rules]] (replaced in 2026)\n- has_part [[New rules]]\n",
             ),
         ),
         ("bootstrap/Old rules.md", &note("Old rules", "")),
         ("bootstrap/New rules.md", &note("New rules", "")),
     ]);
     assert_eq!(ids(&v.walk()), ["bootstrap/index", "bootstrap/New rules"]);
+}
+
+/// Doc 04 §2.2 steps 2 and 4: only `indexes` and `has_part` point down the tree. Any other relation word, in a loaded
+/// note, leaves its target unloaded, and a missing target behind such a word is not a ghost line either.
+#[test]
+fn only_indexes_and_has_part_are_followed() {
+    let v = TestVault::new(&[
+        (
+            "bootstrap/index.md",
+            &note(
+                "Bootstrap",
+                "## Relations\n\
+                 - relates_to [[Related]]\n\
+                 - loads [[Loaded]]\n\
+                 - part_of [[Parent]]\n\
+                 - supersedes [[Retired]]\n\
+                 - depends_on [[Depended]]\n\
+                 - relates_to [[Missing one]]\n\
+                 - loads [[Missing two]]\n\
+                 - indexes [[Hub]]\n\
+                 - has_part [[Leaf]]\n",
+            ),
+        ),
+        ("bootstrap/Related.md", &note("Related", "")),
+        ("bootstrap/Loaded.md", &note("Loaded", "")),
+        ("bootstrap/Parent.md", &note("Parent", "")),
+        ("bootstrap/Retired.md", &note("Retired", "")),
+        ("bootstrap/Depended.md", &note("Depended", "")),
+        (
+            "bootstrap/Hub.md",
+            &note(
+                "Hub",
+                "## Relations\n- relates_to [[Hub side]]\n- has_part [[Hub leaf]]\n",
+            ),
+        ),
+        ("bootstrap/Hub side.md", &note("Hub side", "")),
+        ("bootstrap/Hub leaf.md", &note("Hub leaf", "")),
+        ("bootstrap/Leaf.md", &note("Leaf", "")),
+    ]);
+    let b = v.walk();
+    assert_eq!(
+        ids(&b),
+        [
+            "bootstrap/index",
+            "bootstrap/Hub",
+            "bootstrap/Hub leaf",
+            "bootstrap/Leaf"
+        ]
+    );
+    assert!(b.not_loaded.is_empty());
+    assert!(!b.payload().contains("not loaded"));
+}
+
+/// The relation word is compared in lowercase: `Has_Part` and `INDEXES` are followed. The ghost line is the same.
+#[test]
+fn the_relation_word_is_compared_in_lowercase() {
+    let v = TestVault::new(&[
+        (
+            "bootstrap/index.md",
+            &note(
+                "Bootstrap",
+                "## Relations\n- Has_Part [[A]]\n- INDEXES [[B]]\n- Indexes [[Gone]]\n- RELATES_TO [[C]]\n",
+            ),
+        ),
+        ("bootstrap/A.md", &note("A", "")),
+        ("bootstrap/B.md", &note("B", "")),
+        ("bootstrap/C.md", &note("C", "")),
+    ]);
+    let b = v.walk();
+    assert_eq!(ids(&b), ["bootstrap/index", "bootstrap/A", "bootstrap/B"]);
+    assert_eq!(b.not_loaded, ["Gone"]);
+}
+
+/// A cross-reference with `relates_to` does not change the load order: the note loads where its `has_part` or
+/// `indexes` parent puts it, after the sibling that comes first, and not where the cross-reference sits.
+#[test]
+fn a_cross_reference_does_not_change_the_load_order() {
+    let v = TestVault::new(&[
+        (
+            "bootstrap/index.md",
+            &note(
+                "Bootstrap",
+                "## Relations\n- relates_to [[Shared]]\n- has_part [[A]]\n- indexes [[Hub]]\n",
+            ),
+        ),
+        ("bootstrap/A.md", &note("A", "## Relations\n- relates_to [[Shared]]\n")),
+        (
+            "bootstrap/Hub.md",
+            &note("Hub", "## Relations\n- has_part [[Shared]]\n"),
+        ),
+        ("bootstrap/Shared.md", &note("Shared", "")),
+    ]);
+    assert_eq!(
+        ids(&v.walk()),
+        ["bootstrap/index", "bootstrap/A", "bootstrap/Hub", "bootstrap/Shared"]
+    );
 }
 
 /// Step 4, third bullet: a `part_of` written in the target is not an edge out of the source. The index does not
@@ -315,13 +411,13 @@ fn links_out_of_the_bootstrap_are_not_followed() {
             "bootstrap/index.md",
             &note(
                 "Bootstrap",
-                "## Relations\n- relates_to [[knowledge::Deploy]]\n- relates_to [[archive/Session 1]]\n\
+                "## Relations\n- has_part [[knowledge::Deploy]]\n- indexes [[archive/Session 1]]\n\
                  - has_part [[Inside]]\n",
             ),
         ),
         (
             "bootstrap/Inside.md",
-            &note("Inside", "## Relations\n- relates_to [[Deploy]]\n"),
+            &note("Inside", "## Relations\n- has_part [[Deploy]]\n"),
         ),
         ("knowledge/Deploy.md", &note("Deploy", "")),
         ("archive/Session 1.md", "# Session 1\n\nRaw.\n"),
@@ -526,7 +622,7 @@ fn a_ghost_link_ends_the_payload_with_one_line() {
         ),
         (
             "bootstrap/Style.md",
-            &note("Style", "## Relations\n- uses [[behavior/personas/Mentor]]\n"),
+            &note("Style", "## Relations\n- has_part [[behavior/personas/Mentor]]\n"),
         ),
     ]);
     let b = v.walk();
@@ -735,7 +831,7 @@ fn an_ambiguous_ghost_heals_when_one_note_is_renamed() {
     assert!(!b.payload().contains("not loaded"));
 }
 
-/// A ghost link behind a `supersedes` is not listed: the walk never looks at it (doc 05 §3.1).
+/// A ghost link behind a word the walk does not follow is not listed: the walk never looks at it (doc 05 §3.1).
 #[test]
 fn a_superseded_ghost_is_not_listed() {
     let v = TestVault::new(&[(
@@ -1173,4 +1269,37 @@ fn the_cli_rejects_misplaced_arguments() {
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         assert_eq!(stdout(&out), "");
     }
+}
+
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+/// The fixture vault's bootstrap is a small tree with a hub in between: index -> Profile -> Identity.
+#[test]
+fn the_fixture_bootstrap_loads_the_index_the_hub_and_the_note() {
+    let v = TestVault::new(&[]);
+    copy_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault/bootstrap"),
+        &v.root.join("bootstrap"),
+    );
+    let b = v.walk();
+    assert_eq!(
+        ids(&b),
+        [
+            "bootstrap/index",
+            "bootstrap/profile/Profile",
+            "bootstrap/profile/Identity"
+        ]
+    );
+    assert!(b.not_loaded.is_empty());
 }
