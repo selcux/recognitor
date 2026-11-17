@@ -171,19 +171,68 @@ pub fn silence(note: &mut ParsedNote, namespace: &str) -> Suppressed {
     s
 }
 
+/// The Markdown dialect every note is read in. Anything that has to agree with the parser on where headings and code
+/// blocks are (the bootstrap payload does) parses with these options. They leave out metadata blocks on purpose:
+/// frontmatter counts only at the very start of the file (doc 03 §2), and [`frontmatter_block`] finds it. A `---`
+/// block later in the file is body text.
+pub fn markdown_options() -> Options {
+    Options::ENABLE_WIKILINKS | Options::ENABLE_TABLES | Options::ENABLE_FOOTNOTES | Options::ENABLE_STRIKETHROUGH
+}
+
+/// True for the heading that opens a relations section: an H2 whose text is exactly `Relations` (doc 03 §3). The
+/// section runs to the next H1 or H2.
+pub fn is_relations_heading(level: HeadingLevel, text: &str) -> bool {
+    level == HeadingLevel::H2 && text == "Relations"
+}
+
+/// The frontmatter of `text` (without a byte-order mark): a `---` block at the very start of the file (doc 03 §2).
+/// Returns its byte range, closing line included, and its YAML text. A `---` block anywhere else is not frontmatter,
+/// and neither is an unclosed one.
+pub fn frontmatter_block(text: &str) -> Option<(Range<usize>, String)> {
+    let mut yaml = String::new();
+    for (i, (event, r)) in Parser::new_ext(text, Options::ENABLE_YAML_STYLE_METADATA_BLOCKS)
+        .into_offset_iter()
+        .enumerate()
+    {
+        match event {
+            Event::Start(Tag::MetadataBlock(_)) if i == 0 && r.start == 0 => {}
+            Event::Text(t) if i > 0 => yaml.push_str(&t),
+            Event::End(TagEnd::MetadataBlock(_)) if i > 0 => return Some((r, yaml)),
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// Parses one note.
 pub fn parse_note(src: &str) -> ParsedNote {
-    let mut p = NoteParser::new(src);
     let (base, text) = match src.strip_prefix('\u{feff}') {
         Some(rest) => ('\u{feff}'.len_utf8(), rest),
         None => (0, src),
     };
-    let options = Options::ENABLE_WIKILINKS
-        | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
-        | Options::ENABLE_TABLES
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_STRIKETHROUGH;
-    for (event, r) in Parser::new_ext(text, options).into_offset_iter() {
+    // The frontmatter is read first and blanked out, with its line breaks kept, so that every offset and line number
+    // of the body stays the same and the Markdown parser sees none of it.
+    let front = frontmatter_block(text);
+    let masked: std::borrow::Cow<'_, str> = match &front {
+        Some((range, _)) => {
+            let mut bytes = src.as_bytes().to_vec();
+            for b in &mut bytes[base + range.start..base + range.end] {
+                if *b != b'\n' {
+                    *b = b' ';
+                }
+            }
+            // Only whole characters of the block became spaces (one per byte), so the text stays valid UTF-8.
+            std::borrow::Cow::Owned(String::from_utf8_lossy(&bytes).into_owned())
+        }
+        None => std::borrow::Cow::Borrowed(src),
+    };
+    let mut p = NoteParser::new(&masked);
+    if let Some((_, yaml)) = front {
+        p.metadata = yaml;
+        p.frontmatter();
+    }
+    let text = masked.get(base..).unwrap_or_default();
+    for (event, r) in Parser::new_ext(text, markdown_options()).into_offset_iter() {
         p.event(event, (r.start + base)..(r.end + base));
     }
     p.finish()
@@ -266,7 +315,6 @@ struct NoteParser<'a> {
     src: &'a str,
     line_starts: Vec<usize>,
     depth: usize,
-    in_metadata: bool,
     metadata: String,
     fm_title: Option<String>,
     fm_type: Option<String>,
@@ -292,7 +340,6 @@ impl<'a> NoteParser<'a> {
             src,
             line_starts,
             depth: 0,
-            in_metadata: false,
             metadata: String::new(),
             fm_title: None,
             fm_type: None,
@@ -324,10 +371,6 @@ impl<'a> NoteParser<'a> {
             Event::Start(tag) => self.start(tag, range),
             Event::End(end) => self.end(end),
             Event::Text(t) => {
-                if self.in_metadata {
-                    self.metadata.push_str(&t);
-                    return;
-                }
                 if let Some(h) = &mut self.heading {
                     h.text.push_str(&t);
                 }
@@ -378,7 +421,6 @@ impl<'a> NoteParser<'a> {
             self.inline(range.clone(), Inline::Other);
         }
         match tag {
-            Tag::MetadataBlock(_) => self.in_metadata = true,
             Tag::Heading { level, .. } => {
                 self.heading = Some(OpenHeading {
                     level,
@@ -413,10 +455,6 @@ impl<'a> NoteParser<'a> {
     fn end(&mut self, end: TagEnd) {
         self.depth = self.depth.saturating_sub(1);
         match end {
-            TagEnd::MetadataBlock(_) => {
-                self.in_metadata = false;
-                self.frontmatter();
-            }
             TagEnd::Heading(_) => {
                 if let Some(h) = self.heading.take() {
                     self.heading_done(h);
@@ -541,7 +579,7 @@ impl<'a> NoteParser<'a> {
             self.summary_state = SummaryState::AwaitingBlock;
         }
         if matches!(h.level, HeadingLevel::H1 | HeadingLevel::H2) {
-            self.in_relations = h.level == HeadingLevel::H2 && text == "Relations";
+            self.in_relations = is_relations_heading(h.level, &text);
         }
     }
 

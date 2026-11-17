@@ -1791,3 +1791,59 @@ fn the_walk_result_is_the_same_on_every_run() {
         assert_eq!(walk_snapshot(&again), expected, "run {run} differs from the first");
     }
 }
+
+/// Doc 03 §2: frontmatter is the block at the very start of the file. A `---` block later in the document is body
+/// text, so it sets neither title nor type, and the observations and links between two horizontal rules are indexed.
+#[test]
+fn a_dashed_block_after_the_start_is_not_frontmatter() {
+    let v = TestVault::new("mid-frontmatter");
+    v.write(
+        "notes/Real.md",
+        "# Real\n\nSummary.\n\nText.\n\n---\ntitle: Mid\ntype: x\n---\n\nAfter [[Target]].\n",
+        0,
+    );
+    v.write(
+        "notes/Between.md",
+        "# Between\n\nSummary.\n\n---\n- [fact] Kept between two rules.\nSee [[Target]].\n---\n",
+        0,
+    );
+    v.write(
+        "notes/Start.md",
+        "---\ntitle: Front\ntype: spec\n---\n# Heading\n\nSummary.\n\n---\ntitle: Mid\n---\n",
+        0,
+    );
+    v.write("notes/Target.md", "# Target\n\nS.\n", 0);
+    let mut index = v.open();
+    let r = index.rebuild(opts()).unwrap();
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    let row = |key: &str| -> (String, String) {
+        index
+            .connection()
+            .query_row("SELECT title, type FROM notes WHERE key = ?1", [key], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap()
+    };
+    assert_eq!(row("notes/real"), ("Real".to_string(), "note".to_string()));
+    assert_eq!(row("notes/between"), ("Between".to_string(), "note".to_string()));
+    // Real frontmatter at the start still counts, and a second block after it does not override it.
+    assert_eq!(row("notes/start"), ("Front".to_string(), "spec".to_string()));
+    // The link after the stray block, and the link and fact between two rules, are indexed.
+    assert_eq!(
+        target_of(&index, "notes/real", "links_to", "target"),
+        Some(Some("notes/target".to_string()))
+    );
+    assert_eq!(
+        target_of(&index, "notes/between", "links_to", "target"),
+        Some(Some("notes/target".to_string()))
+    );
+    let facts: i64 = index
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM observations WHERE note_key = 'notes/between'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(facts, 1);
+}

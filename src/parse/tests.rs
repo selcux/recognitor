@@ -387,3 +387,19 @@ fn impossible_calendar_dates_stay_text() {
     assert!(n.warnings.is_empty());
     assert_eq!(n.observations[0].qualifiers.as_deref(), Some("@2024-02-29"));
 }
+
+#[test]
+fn frontmatter_counts_only_at_the_start() {
+    // The example that exposed it: a block after a blank line is body text.
+    let n = parse_note("# Real\n\nSummary.\n\nText.\n\n---\ntitle: Mid\ntype: x\n---\n\nAfter [[Link]].\n");
+    assert_eq!(n.title.as_deref(), Some("Real"));
+    assert_eq!(n.note_type, None);
+    assert_eq!(n.links.len(), 1);
+    // Frontmatter at the start still works, with or without a byte-order mark, and keeps line numbers.
+    let n = parse_note("\u{feff}---\ntitle: Front\n---\n# H\n\nS.\n\n- [fact] One.\n");
+    assert_eq!(n.title.as_deref(), Some("Front"));
+    assert_eq!(n.observations[0].line, 8);
+    // An unclosed `---` at the start is not frontmatter.
+    let n = parse_note("---\ntitle: Nope\n\n# H\n");
+    assert_eq!(n.title.as_deref(), Some("H"));
+}
