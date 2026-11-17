@@ -256,6 +256,13 @@ impl Index {
         crate::search::search(&self.conn, query, ns, page)
     }
 
+    /// `recognitor context`: the stale-gated sweep (doc 02 §4), then the links around one note (doc 07 §8). `page`
+    /// counts from 1.
+    pub fn context(&mut self, note: &str, page: usize) -> Result<crate::context::Context> {
+        self.sync_if_stale(SweepOptions::default())?;
+        crate::context::context(&self.conn, note, page)
+    }
+
     /// `recognitor bootstrap`: the stale-gated sweep (doc 02 §4), then the bootstrap walk (doc 04 §2.2).
     pub fn bootstrap(&mut self) -> Result<crate::bootstrap::Bootstrap> {
         self.sync_if_stale(SweepOptions::default())?;

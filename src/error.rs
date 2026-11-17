@@ -26,6 +26,8 @@ pub enum Error {
     Config { path: PathBuf, message: String },
     /// A search query with no words in it (doc 07 §4, "Query text").
     EmptyQuery,
+    /// A note named in a tool call matches no note (doc 07 §6.3). Holds the name as given.
+    NoteNotFound(String),
     /// `load_bootstrap` found no `bootstrap/index.md` in the index: no folder, no file, or a case twin that was left
     /// out (doc 04 §2.2, "No entry point"). Its text is the one error line of the doc, without the `error: ` prefix
     /// that the CLI adds.
@@ -87,6 +89,8 @@ impl fmt::Display for Error {
             // Doc 07 §4 "Query text": a query with no words left is refused with an error that says so.
             Error::EmptyQuery => write!(f, "the search query is empty: give at least one word to search for"),
             Error::NoBootstrap => write!(f, "bootstrap/index.md not found. Run `recognitor lint`."),
+            // Doc 07 §6.3: `not found`. The name is quoted as in the "matches N notes" line.
+            Error::NoteNotFound(name) => write!(f, "\"{name}\" not found"),
             Error::NoCacheDir => write!(f, "no per-user cache directory found; set RECOGNITOR_DB"),
             Error::ForeignDatabase(db) => write!(
                 f,
@@ -109,6 +113,7 @@ impl std::error::Error for Error {
             Error::Sql(e) => Some(e),
             Error::Vault(_)
             | Error::EmptyQuery
+            | Error::NoteNotFound(_)
             | Error::NoBootstrap
             | Error::NoCacheDir
             | Error::NoConfigDir

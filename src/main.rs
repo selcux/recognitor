@@ -1,6 +1,6 @@
 //! `recognitor` CLI: a thin layer over the library. Commands are defined in doc 07 §12.
 //!
-//! Shadow mode builds `sync`, `rebuild`, `search`, `bootstrap` and `config get/set`. The vault comes from
+//! Shadow mode builds `sync`, `rebuild`, `search`, `context`, `bootstrap` and `config get/set`. The vault comes from
 //! `--vault`, else `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
 
 use std::path::PathBuf;
@@ -13,6 +13,7 @@ use recognitor::{Error, Index, SweepOptions, report};
 
 const USAGE: &str = "usage: recognitor <command> [--vault <path>] [--report]
        recognitor search <query> [--vault <path>] [--ns <namespace>] [--page <n>]
+       recognitor context <note> [--vault <path>] [--page <n>]
        recognitor bootstrap [--list] [--vault <path>]
        recognitor config get <key>
        recognitor config set <key> <value>
@@ -21,6 +22,7 @@ commands:
   sync                      sweep the vault and index changed files
   rebuild                   drop the index and re-index the whole vault
   search <query>            full-text search
+  context <note>            the links around one note: an id, a path or a link name
   bootstrap                 print the bootstrap payload (the notes linked from bootstrap/index.md)
   config get <key>          print a config value
   config set <key> <value>  set a config value
@@ -31,7 +33,7 @@ options:
   --vault <path>   vault root; else RECOGNITOR_VAULT, else vault.path in the config file
   --report         list every warning and print shadow-mode diagnostics
   --ns <name>      search: the namespace as a ranking perspective
-  --page <n>       search: page number, from 1
+  --page <n>       search, context: page number, from 1
   --list           bootstrap: list the notes that load, in order, without their content
   -V, --version    print the version
 
@@ -48,6 +50,10 @@ enum Command {
     Search {
         query: String,
         ns: Option<String>,
+        page: usize,
+    },
+    Context {
+        note: String,
         page: usize,
     },
     Bootstrap {
@@ -105,13 +111,18 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             ns,
             page,
         },
+        ("context", []) => return Err("context needs a note".to_string()),
+        ("context", [note]) => Command::Context {
+            note: note.clone(),
+            page,
+        },
         ("bootstrap", []) => Command::Bootstrap { list },
         ("config", [sub, key]) if sub == "get" => Command::Config(ConfigCommand::Get(key.clone())),
         ("config", [sub, key, value]) if sub == "set" => {
             Command::Config(ConfigCommand::Set(key.clone(), value.clone()))
         }
         ("config", _) => return Err("usage: config get <key> | config set <key> <value>".to_string()),
-        ("sync" | "rebuild" | "search" | "bootstrap", [extra, ..]) => {
+        ("sync" | "rebuild" | "search" | "context" | "bootstrap", [extra, ..]) => {
             return Err(format!("unexpected argument: {extra}"));
         }
         (other, _) => return Err(format!("unknown command: {other}")),
@@ -162,6 +173,7 @@ fn run(args: &Args) -> recognitor::Result<String> {
             ns.as_deref(),
             *page,
         )?)),
+        Command::Context { note, page } => Ok(recognitor::context::render(&index.context(note, *page)?)),
         Command::Bootstrap { list } => {
             let bootstrap = index.bootstrap()?;
             if *list {

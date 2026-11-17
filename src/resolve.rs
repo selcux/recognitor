@@ -108,6 +108,48 @@ pub fn resolve(conn: &Connection, source_ns: &str, ref_key: &str) -> Result<Reso
     Ok(pick(names_anywhere(conn, ref_key)?, Step::UniqueName).unwrap_or(Resolution::Ghost))
 }
 
+/// What a note named in a tool call matches (doc 07 §6.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoteLookup {
+    /// One note: its key. The tool runs.
+    One(String),
+    /// Several notes: their ids as written, sorted. The tool runs on none of them.
+    Several(Vec<String>),
+    /// No note.
+    None,
+}
+
+/// Finds the note a tool argument names (doc 07 §6.3): an id, a path or a link name, matched by key. It resolves like
+/// a link with steps 1, 2 and 4 of doc 03 §4 only: a tool call has no linking note, so step 3 has no namespace to
+/// prefer, and a relative path (`./x`, `../x`) has no folder to start from, so it matches nothing.
+///
+/// Unlike a link, several matches are not a ghost: the caller gets their ids back.
+pub fn find_note(conn: &Connection, name: &str) -> Result<NoteLookup> {
+    // The empty source key puts a relative path in the vault root or outside it, where `link_key` drops it.
+    let Some(key) = link_key("", LinkSyntax::Wiki, name) else {
+        return Ok(NoteLookup::None);
+    };
+    {
+        let mut stmt = conn.prepare_cached("SELECT key FROM notes WHERE key = ?1")?;
+        if stmt.exists(params![key])? {
+            return Ok(NoteLookup::One(key));
+        }
+    }
+    let mut matches = match key.split_once("::") {
+        Some((ns, name)) => names_in(conn, ns, name)?,
+        None => names_anywhere(conn, &key)?,
+    };
+    Ok(match matches.len() {
+        0 => NoteLookup::None,
+        1 => matches.pop().map_or(NoteLookup::None, |(key, _)| NoteLookup::One(key)),
+        _ => {
+            let mut ids: Vec<String> = matches.iter().map(|(_, path)| note_id(path).to_string()).collect();
+            ids.sort();
+            NoteLookup::Several(ids)
+        }
+    })
+}
+
 /// `(key, path)` of every note in `ns` whose filename or title matches `name`. The unary `+` keeps SQLite from
 /// choosing the namespace index over the name indexes.
 fn names_in(conn: &Connection, ns: &str, name: &str) -> Result<Vec<(String, String)>> {
