@@ -4,7 +4,7 @@
 //! `## Relations` links in written order. Notes are read from `notes.content`; no vault file is opened.
 //!
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ops::Range;
 
 use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
@@ -12,7 +12,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::{Error, Result};
 use crate::parse::{LinkSyntax, frontmatter_block, is_relations_heading, markdown_options};
-use crate::paths::{BOOTSTRAP_NAMESPACE, note_id, titled_id};
+use crate::paths::{BOOTSTRAP_NAMESPACE, note_id};
 use crate::resolve::{Resolution, link_key, resolve};
 
 /// Key of the entry point (doc 05 §3.2: `<namespace>/index`).
@@ -26,8 +26,9 @@ pub const DEFAULT_MAX_TOKENS: usize = 4000;
 pub struct LoadedNote {
     /// The id as written (doc 03 §4).
     pub id: String,
-    /// Set only when the title differs from the filename by key (doc 07 §4.2, "Line 1").
-    pub title_if_differs: Option<String>,
+    /// The path as stored, relative to the vault root, with its extension and spelling: its last segment is the file
+    /// name that `--list` shows.
+    pub path: String,
     /// The note's title, for the heading.
     pub title: String,
     /// The body: frontmatter and `## Relations` stripped, trimmed.
@@ -44,6 +45,29 @@ pub struct Bootstrap {
     /// The ghosts among [`Bootstrap::not_loaded`] that more than one note matches (doc 04 §2.2, "Ghost links in the
     /// tree"). They are worked out from the index at walk time, with the resolution rules of doc 03 §4.
     pub ambiguous: Vec<String>,
+    /// What each step of the walk met, in the order it met it, for the `--list` tree (doc 04 §2.2, "CLI twin").
+    pub tree: Vec<TreeEntry>,
+}
+
+/// One step of the walk: a note it loaded, a link to a note that was already loaded, or a ghost link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeEntry {
+    /// 0 for the entry point; a link's entry is one deeper than the note it was written in.
+    pub depth: usize,
+    pub what: TreeNode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeNode {
+    /// The entry point, `bootstrap/index.md`: note 0 of [`Bootstrap::notes`].
+    Entry,
+    /// The note at index `note` of [`Bootstrap::notes`], loaded here by the link `link`, as written.
+    Loaded { note: usize, link: String },
+    /// A link, as written, to the note at index `note`, which loaded earlier: not expanded again. A link back to an
+    /// ancestor is the same case.
+    AlreadyLoaded { note: usize, link: String },
+    /// A link to a note that is not there, as written.
+    Ghost { target: String, ambiguous: bool },
 }
 
 /// Walks the bootstrap from `bootstrap/index.md` (doc 04 §2.2).
@@ -51,44 +75,86 @@ pub struct Bootstrap {
 /// Fails with [`Error::NoBootstrap`] when the index has no entry point: no `bootstrap/` folder, no `index.md`, or a
 /// case twin that was left out. Nothing else of the bootstrap is read then.
 pub fn load(conn: &Connection) -> Result<Bootstrap> {
-    let mut visited: HashSet<String> = HashSet::new();
+    // Loaded notes by key, to their index in `notes`.
+    let mut visited: HashMap<String, usize> = HashMap::new();
     let mut notes = Vec::new();
     let mut not_loaded: Vec<String> = Vec::new();
     let mut ambiguous: Vec<String> = Vec::new();
+    let mut tree: Vec<TreeEntry> = Vec::new();
+    // Whether a ghost target is ambiguous, by target as written: the same link text resolves the same way from every
+    // note on the walk, because they are all in the bootstrap namespace.
+    let mut ghosts: HashMap<String, bool> = HashMap::new();
 
     let Some(entry) = read_note(conn, ENTRY_KEY)? else {
         return Err(Error::NoBootstrap);
     };
-    visited.insert(ENTRY_KEY.to_string());
+    visited.insert(ENTRY_KEY.to_string(), 0);
     notes.push(entry);
+    tree.push(TreeEntry {
+        depth: 0,
+        what: TreeNode::Entry,
+    });
 
     // Depth-first without recursion: one iterator of links per note on the path from the entry to the current note,
-    // with that note's key.
+    // with that note's key. The stack's length is the depth of the links being read.
     let mut stack = vec![(ENTRY_KEY.to_string(), links_out(conn, ENTRY_KEY)?.into_iter())];
-    while let Some((source_key, links)) = stack.last_mut() {
+    loop {
+        let depth = stack.len();
+        let Some((source_key, links)) = stack.last_mut() else {
+            break;
+        };
         let Some(link) = links.next() else {
             stack.pop();
             continue;
         };
         let Some(key) = link.target_key else {
-            // A ghost is listed once, however many notes link to it (doc 04 §2.2).
+            let is_ambiguous = match ghosts.get(&link.target_ref) {
+                Some(known) => *known,
+                None => {
+                    // Relation links are wikilinks, and every note on the walk is in the bootstrap namespace.
+                    let found = link_key(source_key, LinkSyntax::Wiki, &link.target_ref)
+                        .map(|ref_key| resolve(conn, BOOTSTRAP_NAMESPACE, &ref_key))
+                        .transpose()?
+                        .is_some_and(|r| matches!(r, Resolution::Ambiguous(_)));
+                    ghosts.insert(link.target_ref.clone(), found);
+                    found
+                }
+            };
+            // The payload lists a ghost once, however many notes link to it (doc 04 §2.2); the tree shows each link.
             if !not_loaded.contains(&link.target_ref) {
-                // Relation links are wikilinks, and every note on the walk is in the bootstrap namespace.
-                let is_ambiguous = link_key(source_key, LinkSyntax::Wiki, &link.target_ref)
-                    .map(|ref_key| resolve(conn, BOOTSTRAP_NAMESPACE, &ref_key))
-                    .transpose()?
-                    .is_some_and(|r| matches!(r, Resolution::Ambiguous(_)));
                 if is_ambiguous {
                     ambiguous.push(link.target_ref.clone());
                 }
-                not_loaded.push(link.target_ref);
+                not_loaded.push(link.target_ref.clone());
             }
+            tree.push(TreeEntry {
+                depth,
+                what: TreeNode::Ghost {
+                    target: link.target_ref,
+                    ambiguous: is_ambiguous,
+                },
+            });
             continue;
         };
-        if !visited.insert(key.clone()) {
+        if let Some(&at) = visited.get(&key) {
+            tree.push(TreeEntry {
+                depth,
+                what: TreeNode::AlreadyLoaded {
+                    note: at,
+                    link: link.target_ref,
+                },
+            });
             continue;
         }
         if let Some(note) = read_note(conn, &key)? {
+            visited.insert(key.clone(), notes.len());
+            tree.push(TreeEntry {
+                depth,
+                what: TreeNode::Loaded {
+                    note: notes.len(),
+                    link: link.target_ref,
+                },
+            });
             notes.push(note);
             let links = links_out(conn, &key)?.into_iter();
             stack.push((key, links));
@@ -98,6 +164,7 @@ pub fn load(conn: &Connection) -> Result<Bootstrap> {
         notes,
         not_loaded,
         ambiguous,
+        tree,
     })
 }
 
@@ -132,20 +199,14 @@ fn links_out(conn: &Connection, source_key: &str) -> Result<Vec<Link>> {
 
 fn read_note(conn: &Connection, key: &str) -> Result<Option<LoadedNote>> {
     let row = conn
-        .prepare_cached("SELECT path, title, title_key, name_key, content FROM notes WHERE key = ?1")?
+        .prepare_cached("SELECT path, title, content FROM notes WHERE key = ?1")?
         .query_row(params![key], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, String>(4)?,
-            ))
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
         })
         .optional()?;
-    Ok(row.map(|(path, title, title_key, name_key, content)| LoadedNote {
+    Ok(row.map(|(path, title, content)| LoadedNote {
         id: note_id(&path).to_string(),
-        title_if_differs: (title_key != name_key).then(|| title.clone()),
+        path,
         title,
         body: body_of(&content),
     }))
@@ -247,19 +308,68 @@ impl Bootstrap {
 
     /// `recognitor bootstrap --list`: which notes load, in order, without their content.
     ///
-    /// One id per line, with its title when it differs from the filename (doc 07 §4.2, "Line 1"), then the ghost line,
-    /// and no budget warning (doc 04 §2.2, "CLI twin").
+    /// A tree in load order (doc 04 §2.2, "CLI twin"): each note under the note whose link loaded it, drawn with
+    /// `├── `, `└── ` and `│   ` like `tree`. The root is the entry point's path. Every other note shows the link as
+    /// written, ` → `, and the file name it resolved to, from the stored path. A ghost shows where its link is, as
+    /// written, on a dashed branch (`├╌╌ `, `└╌╌ `) with no file, marked `(not written yet)` or `(ambiguous)`, and a
+    /// link to a note that loaded earlier is marked `(already loaded)` and not expanded. Two spaces come before a
+    /// marker. There is no separate ghost line and no budget warning.
     pub fn list(&self) -> String {
+        let n = self.tree.len();
+        // An entry is the last child of its parent when the next entry that is not deeper than it is shallower.
+        let is_last = |i: usize| {
+            self.tree[i + 1..]
+                .iter()
+                .find(|e| e.depth <= self.tree[i].depth)
+                .is_none_or(|e| e.depth < self.tree[i].depth)
+        };
         let mut out = String::new();
-        for n in &self.notes {
-            out.push_str(&titled_id(&n.id, n.title_if_differs.as_deref()));
-            out.push('\n');
-        }
-        if let Some(line) = self.not_loaded_line() {
-            out.push_str(&line);
-            out.push('\n');
+        // For each level above the entry being drawn: whether that ancestor was the last child of its parent.
+        let mut ancestors_last: Vec<bool> = Vec::new();
+        for i in 0..n {
+            let entry = &self.tree[i];
+            let (label, marker) = match &entry.what {
+                TreeNode::Entry => (self.notes[0].path.clone(), ""),
+                TreeNode::Loaded { note, link } => (self.arrow(link, *note), ""),
+                TreeNode::AlreadyLoaded { note, link } => (self.arrow(link, *note), "  (already loaded)"),
+                TreeNode::Ghost { target, ambiguous } => (
+                    target.clone(),
+                    if *ambiguous {
+                        "  (ambiguous)"
+                    } else {
+                        "  (not written yet)"
+                    },
+                ),
+            };
+            if entry.depth == 0 {
+                out.push_str(&format!("{label}{marker}\n"));
+                continue;
+            }
+            ancestors_last.truncate(entry.depth - 1);
+            for last in &ancestors_last {
+                out.push_str(if *last { "    " } else { "\u{2502}   " });
+            }
+            let last = is_last(i);
+            // A ghost's branch is dashed (U+254C); the columns of the levels above stay solid.
+            let dash = if matches!(entry.what, TreeNode::Ghost { .. }) {
+                '\u{254c}'
+            } else {
+                '\u{2500}'
+            };
+            out.push(if last { '\u{2514}' } else { '\u{251c}' });
+            out.push(dash);
+            out.push(dash);
+            out.push(' ');
+            out.push_str(&format!("{label}{marker}\n"));
+            ancestors_last.push(last);
         }
         out
+    }
+
+    /// `<link as written> → <file name>`: the file name is the last segment of the stored path, `.md` included.
+    fn arrow(&self, link: &str, note: usize) -> String {
+        let path = &self.notes[note].path;
+        format!("{link} → {}", path.rsplit('/').next().unwrap_or(path))
     }
 
     /// The payload size in tokens, estimated as characters ÷ 4 (rounded up). The ghost line counts; a budget

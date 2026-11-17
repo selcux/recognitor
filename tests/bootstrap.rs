@@ -671,87 +671,54 @@ fn ambiguous_vault(index_links: &str) -> TestVault {
     TestVault::new(&[
         (
             "bootstrap/index.md",
-            &note(
-                "Bootstrap",
-                &format!(
-                    "## Relations
-{index_links}"
-                ),
-            ),
+            &note("Bootstrap", &format!("## Relations\n{index_links}")),
         ),
-        (
-            "bootstrap/Tone.md",
-            &note(
-                "Tone", "One.
-",
-            ),
-        ),
-        (
-            "bootstrap/behavior/Tone.md",
-            &note(
-                "Tone", "Two.
-",
-            ),
-        ),
+        ("bootstrap/Tone.md", &note("Tone", "One.\n")),
+        ("bootstrap/behavior/Tone.md", &note("Tone", "Two.\n")),
     ])
 }
 
 /// Doc 04 §2.2: a ghost that more than one note matches says `(ambiguous)` instead of `(not written yet)`.
 #[test]
 fn an_ambiguous_ghost_says_so() {
-    let v = ambiguous_vault(
-        "- has_part [[Tone]]
-",
-    );
+    let v = ambiguous_vault("- has_part [[Tone]]\n");
     let b = v.walk();
     assert_eq!(ids(&b), ["bootstrap/index"]);
     assert_eq!(b.not_loaded, ["Tone"]);
     assert!(
-        b.payload().ends_with(
-            "
-not loaded: Tone (ambiguous)
-"
-        ),
+        b.payload().ends_with("\nnot loaded: Tone (ambiguous)\n"),
         "{}",
         b.payload()
     );
+    // In the `--list` tree it stands where its link is.
     assert_eq!(
         stdout(&v.cli(&["bootstrap", "--list"])),
-        "bootstrap/index, titled \"Bootstrap\"
-not loaded: Tone (ambiguous)
-"
+        "bootstrap/index.md\n\u{2514}\u{254c}\u{254c} Tone  (ambiguous)\n"
     );
 }
 
 /// The doc's own example: a missing note and an ambiguous one share the line, in the order the links are written.
 #[test]
 fn a_missing_and_an_ambiguous_ghost_share_the_line() {
-    let v = ambiguous_vault(
-        "- has_part [[Mentor]]
-- has_part [[Tone]]
-",
+    let v = ambiguous_vault("- has_part [[Mentor]]\n- has_part [[Tone]]\n");
+    assert!(
+        v.walk()
+            .payload()
+            .ends_with("\nnot loaded: Mentor (not written yet), Tone (ambiguous)\n")
     );
-    assert!(v.walk().payload().ends_with(
-        "
-not loaded: Mentor (not written yet), Tone (ambiguous)
-"
-    ));
     // Written the other way round, the order follows the links.
     v.write(
         "bootstrap/index.md",
         &note(
             "Bootstrap",
-            "## Relations
-- has_part [[Tone]]
-- has_part [[Mentor]]
-",
+            "## Relations\n- has_part [[Tone]]\n- has_part [[Mentor]]\n",
         ),
     );
-    assert!(v.walk().payload().ends_with(
-        "
-not loaded: Tone (ambiguous), Mentor (not written yet)
-"
-    ));
+    assert!(
+        v.walk()
+            .payload()
+            .ends_with("\nnot loaded: Tone (ambiguous), Mentor (not written yet)\n")
+    );
 }
 
 /// The same ambiguous target linked from two notes is listed once.
@@ -760,37 +727,11 @@ fn an_ambiguous_ghost_linked_twice_is_listed_once() {
     let v = TestVault::new(&[
         (
             "bootstrap/index.md",
-            &note(
-                "Bootstrap",
-                "## Relations
-- has_part [[Tone]]
-- has_part [[Hub]]
-",
-            ),
+            &note("Bootstrap", "## Relations\n- has_part [[Tone]]\n- has_part [[Hub]]\n"),
         ),
-        (
-            "bootstrap/Hub.md",
-            &note(
-                "Hub",
-                "## Relations
-- has_part [[Tone]]
-",
-            ),
-        ),
-        (
-            "bootstrap/Tone.md",
-            &note(
-                "Tone", "One.
-",
-            ),
-        ),
-        (
-            "bootstrap/behavior/Tone.md",
-            &note(
-                "Tone", "Two.
-",
-            ),
-        ),
+        ("bootstrap/Hub.md", &note("Hub", "## Relations\n- has_part [[Tone]]\n")),
+        ("bootstrap/Tone.md", &note("Tone", "One.\n")),
+        ("bootstrap/behavior/Tone.md", &note("Tone", "Two.\n")),
     ]);
     let b = v.walk();
     assert_eq!(ids(&b), ["bootstrap/index", "bootstrap/Hub"]);
@@ -802,10 +743,7 @@ fn an_ambiguous_ghost_linked_twice_is_listed_once() {
 /// `not loaded` line goes. Matching by title counts too: a second note titled `Tone` makes `[[Tone]]` ambiguous.
 #[test]
 fn an_ambiguous_ghost_heals_when_one_note_is_renamed() {
-    let v = ambiguous_vault(
-        "- has_part [[Tone]]
-",
-    );
+    let v = ambiguous_vault("- has_part [[Tone]]\n");
     let mut index = v.index();
     assert!(index.bootstrap().unwrap().payload().contains("Tone (ambiguous)"));
     fs::rename(
@@ -817,13 +755,7 @@ fn an_ambiguous_ghost_heals_when_one_note_is_renamed() {
     db::meta_set(index.connection(), meta_keys::LAST_SWEEP_FINISHED_MS, "0").unwrap();
     assert!(index.bootstrap().unwrap().payload().contains("Tone (ambiguous)"));
     // Retitle it too, and the link resolves to the one note left.
-    v.write(
-        "bootstrap/behavior/Pitch.md",
-        &note(
-            "Pitch", "Two.
-",
-        ),
-    );
+    v.write("bootstrap/behavior/Pitch.md", &note("Pitch", "Two.\n"));
     db::meta_set(index.connection(), meta_keys::LAST_SWEEP_FINISHED_MS, "0").unwrap();
     let b = index.bootstrap().unwrap();
     assert_eq!(ids(&b), ["bootstrap/index", "bootstrap/Tone"]);
@@ -1039,55 +971,275 @@ fn a_note_with_no_body_is_only_a_heading() {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// `--list` (doc 04 §2.2 "CLI twin", doc 07 §4.2 "Line 1")
+// `--list` (doc 04 §2.2 "CLI twin"): a tree in load order, each node the link as written, an arrow and the file name
 // ---------------------------------------------------------------------------------------------------------------
 
-/// `--list` prints which notes load, in order, without their content, one titled id per line.
+/// The example of doc 04 §2.2, line for line: a hub under the index, a note with two children, a title link whose file
+/// name differs, a link to a note that loaded earlier, and two ghosts on dashed branches.
 #[test]
-fn list_prints_the_ids_in_load_order() {
-    let v = layout_vault();
+fn list_prints_the_doc_example() {
+    let v = TestVault::new(&[
+        (
+            "bootstrap/index.md",
+            "# Index\n\nS.\n\n## Relations\n- indexes [[Profile]]\n",
+        ),
+        (
+            "bootstrap/profile/Profile.md",
+            "# Profile\n\nS.\n\n## Relations\n- has_part [[identity]]\n- has_part [[Tools & sourcing]]\n\
+             - has_part [[languages]]\n- has_part [[Mentor]]\n- has_part [[Tone]]\n",
+        ),
+        (
+            "bootstrap/profile/identity.md",
+            "# identity\n\nS.\n\n## Relations\n- has_part [[languages]]\n- has_part [[spoken english]]\n",
+        ),
+        ("bootstrap/profile/languages.md", "# languages\n\nS.\n"),
+        ("bootstrap/profile/spoken english.md", "# Spoken English\n\nS.\n"),
+        ("bootstrap/profile/tools.md", "# Tools & sourcing\n\nS.\n"),
+        ("bootstrap/Tone.md", &note("Tone", "One.\n")),
+        ("bootstrap/behavior/Tone.md", &note("Tone", "Two.\n")),
+    ]);
     let out = v.cli(&["bootstrap", "--list"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
-        "bootstrap/index, titled \"Bootstrap\"\n\
-         bootstrap/profile/Profile\n\
-         bootstrap/behavior/Style\n\
-         bootstrap/behavior/personas/Mentor\n\
-         bootstrap/rules/Global rules\n"
+        "bootstrap/index.md\n\
+         \u{2514}\u{2500}\u{2500} Profile \u{2192} Profile.md\n\
+         \x20   \u{251c}\u{2500}\u{2500} identity \u{2192} identity.md\n\
+         \x20   \u{2502}   \u{251c}\u{2500}\u{2500} languages \u{2192} languages.md\n\
+         \x20   \u{2502}   \u{2514}\u{2500}\u{2500} spoken english \u{2192} spoken english.md\n\
+         \x20   \u{251c}\u{2500}\u{2500} Tools & sourcing \u{2192} tools.md\n\
+         \x20   \u{251c}\u{2500}\u{2500} languages \u{2192} languages.md  (already loaded)\n\
+         \x20   \u{251c}\u{254c}\u{254c} Mentor  (not written yet)\n\
+         \x20   \u{2514}\u{254c}\u{254c} Tone  (ambiguous)\n"
     );
-    assert!(!stdout(&out).contains("Patient"), "no note content");
+    assert_eq!(stderr(&out), "");
+    // Same walk as the payload: the load order is the order the tree was drawn in.
+    let b = v.walk();
+    assert_eq!(
+        ids(&b),
+        [
+            "bootstrap/index",
+            "bootstrap/profile/Profile",
+            "bootstrap/profile/identity",
+            "bootstrap/profile/languages",
+            "bootstrap/profile/spoken english",
+            "bootstrap/profile/tools"
+        ]
+    );
+    // The payload keeps its own ghost line, and `--list` carries no `not loaded` line and no warning.
+    assert!(
+        b.payload()
+            .ends_with("\nnot loaded: Mentor (not written yet), Tone (ambiguous)\n")
+    );
+    assert!(!stdout(&out).contains("not loaded") && !stdout(&out).contains("warning"));
 }
 
-/// An id shows its title when the title differs from the filename by key (doc 07 §4.2, "Line 1").
+/// A deep and wide tree: the last child of each level gets the closing connector, the others the branching one, and
+/// a level under a last child is indented with spaces, under another child with a vertical bar.
 #[test]
-fn list_adds_the_title_when_it_differs_from_the_filename() {
+fn list_draws_connectors_for_a_deep_and_wide_tree() {
+    let leaf = |name: &str| (format!("bootstrap/{name}.md"), format!("# {name}\n\nS.\n"));
+    let hub = |name: &str, kids: &[&str]| {
+        let links: String = kids.iter().map(|k| format!("- has_part [[{k}]]\n")).collect();
+        (
+            format!("bootstrap/{name}.md"),
+            format!("# {name}\n\nS.\n\n## Relations\n{links}"),
+        )
+    };
+    let files = vec![
+        hub("index", &["a", "b", "c"]),
+        hub("a", &["a1", "a2"]),
+        hub("a1", &["a1x"]),
+        leaf("a1x"),
+        hub("a2", &["a2x", "a2y"]),
+        leaf("a2x"),
+        leaf("a2y"),
+        leaf("b"),
+        hub("c", &["c1"]),
+        hub("c1", &["c1x", "c1y"]),
+        leaf("c1x"),
+        leaf("c1y"),
+    ];
+    let refs: Vec<(&str, &str)> = files.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let v = TestVault::new(&refs);
+    let tree = "bootstrap/index.md\n\
+        \u{251c}\u{2500}\u{2500} a \u{2192} a.md\n\
+        \u{2502}   \u{251c}\u{2500}\u{2500} a1 \u{2192} a1.md\n\
+        \u{2502}   \u{2502}   \u{2514}\u{2500}\u{2500} a1x \u{2192} a1x.md\n\
+        \u{2502}   \u{2514}\u{2500}\u{2500} a2 \u{2192} a2.md\n\
+        \u{2502}       \u{251c}\u{2500}\u{2500} a2x \u{2192} a2x.md\n\
+        \u{2502}       \u{2514}\u{2500}\u{2500} a2y \u{2192} a2y.md\n\
+        \u{251c}\u{2500}\u{2500} b \u{2192} b.md\n\
+        \u{2514}\u{2500}\u{2500} c \u{2192} c.md\n\
+        \x20   \u{2514}\u{2500}\u{2500} c1 \u{2192} c1.md\n\
+        \x20       \u{251c}\u{2500}\u{2500} c1x \u{2192} c1x.md\n\
+        \x20       \u{2514}\u{2500}\u{2500} c1y \u{2192} c1y.md\n";
+    assert_eq!(stdout(&v.cli(&["bootstrap", "--list"])), tree);
+    // The tree is the walk: the lines after the root are the notes in load order.
+    let b = v.walk();
+    assert_eq!(b.notes.len(), 12);
+    let drawn: Vec<&str> = tree
+        .lines()
+        .skip(1)
+        .map(|l| l.rsplit(" \u{2192} ").next().unwrap_or(l))
+        .collect();
+    let files: Vec<&str> = b.notes[1..]
+        .iter()
+        .map(|n| n.path.rsplit('/').next().unwrap_or(&n.path))
+        .collect();
+    assert_eq!(drawn, files);
+}
+
+/// A tree with only the entry point is its path on one line, as stored: `Bootstrap/Index.md` stays so.
+#[test]
+fn list_of_a_lone_index_is_its_path() {
+    let v = TestVault::new(&[("bootstrap/index.md", "# Index\n\nS.\n")]);
+    assert_eq!(stdout(&v.cli(&["bootstrap", "--list"])), "bootstrap/index.md\n");
+    let v = TestVault::new(&[("Bootstrap/Index.md", "# Index\n\nS.\n")]);
+    assert_eq!(stdout(&v.cli(&["bootstrap", "--list"])), "Bootstrap/Index.md\n");
+}
+
+/// A node shows the link as written, whatever its spelling or form, and the file name from the stored path: a title
+/// link gets the file that carries the title, a path link only its last segment.
+#[test]
+fn list_shows_the_link_as_written_and_the_file_name() {
     let v = TestVault::new(&[
         (
             "bootstrap/index.md",
-            "---\ntitle: Index\n---\n# Index\n\nS.\n\n## Relations\n- has_part [[Tools]]\n- has_part [[Plain]]\n",
+            "# Index\n\nS.\n\n## Relations\n- has_part [[Tools & sourcing]]\n- has_part [[bootstrap/deep/Plain]]\n\
+             - has_part [[SHOUT]]\n- indexes [[tools]]\n",
         ),
-        ("bootstrap/Tools.md", "# Tools & sourcing\n\nS.\n"),
-        ("bootstrap/Plain.md", "# plain\n\nS.\n"),
+        ("bootstrap/tools.md", "# Tools & sourcing\n\nS.\n"),
+        ("bootstrap/deep/Plain.md", "# Plain\n\nS.\n"),
+        ("bootstrap/Shout.md", "# Shout\n\nS.\n"),
     ]);
-    let out = v.cli(&["bootstrap", "--list"]);
     assert_eq!(
-        stdout(&out),
-        "bootstrap/index\nbootstrap/Tools, titled \"Tools & sourcing\"\nbootstrap/Plain\n"
+        stdout(&v.cli(&["bootstrap", "--list"])),
+        "bootstrap/index.md\n\
+         \u{251c}\u{2500}\u{2500} Tools & sourcing \u{2192} tools.md\n\
+         \u{251c}\u{2500}\u{2500} bootstrap/deep/Plain \u{2192} Plain.md\n\
+         \u{251c}\u{2500}\u{2500} SHOUT \u{2192} Shout.md\n\
+         \u{2514}\u{2500}\u{2500} tools \u{2192} tools.md  (already loaded)\n"
     );
 }
 
-/// `--list` also ends with the ghost line, so a hook author sees what did not load.
+/// A ghost shows where its link is, as written, with no arrow and no file, and a ghost linked twice shows twice (the
+/// payload lists it once). An ambiguous one says `(ambiguous)`.
 #[test]
-fn list_ends_with_the_ghost_line() {
-    let v = TestVault::new(&[(
-        "bootstrap/index.md",
-        &note("Bootstrap", "## Relations\n- has_part [[Mentor]]\n"),
-    )]);
+fn list_shows_ghosts_in_place() {
+    let v = TestVault::new(&[
+        (
+            "bootstrap/index.md",
+            "# Index\n\nS.\n\n## Relations\n- has_part [[Mentor]]\n- has_part [[Hub]]\n- has_part [[Tone]]\n",
+        ),
+        (
+            "bootstrap/Hub.md",
+            "# Hub\n\nS.\n\n## Relations\n- has_part [[Tone]]\n- has_part [[Mentor]]\n",
+        ),
+        ("bootstrap/Tone.md", &note("Tone", "One.\n")),
+        ("bootstrap/behavior/Tone.md", &note("Tone", "Two.\n")),
+    ]);
+    let out = stdout(&v.cli(&["bootstrap", "--list"]));
+    assert_eq!(
+        out,
+        "bootstrap/index.md\n\
+         \u{251c}\u{254c}\u{254c} Mentor  (not written yet)\n\
+         \u{251c}\u{2500}\u{2500} Hub \u{2192} Hub.md\n\
+         \u{2502}   \u{251c}\u{254c}\u{254c} Tone  (ambiguous)\n\
+         \u{2502}   \u{2514}\u{254c}\u{254c} Mentor  (not written yet)\n\
+         \u{2514}\u{254c}\u{254c} Tone  (ambiguous)\n"
+    );
+    let b = v.walk();
+    assert!(
+        b.payload()
+            .ends_with("\nnot loaded: Mentor (not written yet), Tone (ambiguous)\n")
+    );
+}
+
+/// A link back to an ancestor (a cycle) and a self-link are shown as already loaded and not expanded.
+#[test]
+fn list_marks_cycles_as_already_loaded() {
+    let v = TestVault::new(&[
+        (
+            "bootstrap/index.md",
+            "# Index\n\nS.\n\n## Relations\n- has_part [[A]]\n",
+        ),
+        (
+            "bootstrap/A.md",
+            "# A\n\nS.\n\n## Relations\n- has_part [[B]]\n- has_part [[index]]\n",
+        ),
+        (
+            "bootstrap/B.md",
+            "# B\n\nS.\n\n## Relations\n- has_part [[A]]\n- has_part [[B]]\n",
+        ),
+    ]);
     assert_eq!(
         stdout(&v.cli(&["bootstrap", "--list"])),
-        "bootstrap/index, titled \"Bootstrap\"\nnot loaded: Mentor (not written yet)\n"
+        "bootstrap/index.md\n\
+         \u{2514}\u{2500}\u{2500} A \u{2192} A.md\n\
+         \x20   \u{251c}\u{2500}\u{2500} B \u{2192} B.md\n\
+         \x20   \u{2502}   \u{251c}\u{2500}\u{2500} A \u{2192} A.md  (already loaded)\n\
+         \x20   \u{2502}   \u{2514}\u{2500}\u{2500} B \u{2192} B.md  (already loaded)\n\
+         \x20   \u{2514}\u{2500}\u{2500} index \u{2192} index.md  (already loaded)\n"
     );
+}
+
+/// Links the walk does not follow do not show in the tree: other relation words, plain links, links that leave the
+/// bootstrap.
+#[test]
+fn list_leaves_out_links_that_are_not_followed() {
+    let v = TestVault::new(&[
+        (
+            "bootstrap/index.md",
+            "# Index\n\nS.\n\n## Relations\n- relates_to [[Side]]\n- relates_to [[Missing]]\n- [[Plain]]\n\
+             - has_part [[knowledge::Deploy]]\n- has_part [[Leaf]]\n",
+        ),
+        ("bootstrap/Side.md", "# Side\n\nS.\n"),
+        ("bootstrap/Plain.md", "# Plain\n\nS.\n"),
+        ("bootstrap/Leaf.md", "# Leaf\n\nS.\n"),
+        ("knowledge/Deploy.md", "# Deploy\n\nS.\n"),
+    ]);
+    assert_eq!(
+        stdout(&v.cli(&["bootstrap", "--list"])),
+        "bootstrap/index.md\n\u{2514}\u{2500}\u{2500} Leaf \u{2192} Leaf.md\n"
+    );
+}
+
+/// The fixture vault's bootstrap as a tree: index, then the Profile hub, then Identity under it.
+#[test]
+fn list_of_the_fixture_vault() {
+    let v = TestVault::new(&[]);
+    copy_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/vault/bootstrap"),
+        &v.root.join("bootstrap"),
+    );
+    assert_eq!(
+        stdout(&v.cli(&["bootstrap", "--list"])),
+        "bootstrap/index.md\n\
+         \u{2514}\u{2500}\u{2500} Profile \u{2192} Profile.md\n\
+         \x20   \u{2514}\u{2500}\u{2500} Identity \u{2192} Identity.md\n"
+    );
+}
+
+/// The CLI, end to end: exit 0, the tree on stdout, nothing on stderr, no budget warning even when the payload is
+/// over budget.
+#[test]
+fn list_through_the_cli_carries_no_budget_warning() {
+    let v = layout_vault();
+    config::set(&v.config, "bootstrap.max_tokens", "1").unwrap();
+    let out = v.cli(&["bootstrap", "--list"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stderr(&out), "");
+    assert_eq!(
+        stdout(&out),
+        "bootstrap/index.md\n\
+         \u{251c}\u{2500}\u{2500} Profile \u{2192} Profile.md\n\
+         \u{251c}\u{2500}\u{2500} Style \u{2192} Style.md\n\
+         \u{2502}   \u{2514}\u{2500}\u{2500} Mentor \u{2192} Mentor.md\n\
+         \u{2514}\u{2500}\u{2500} Global rules \u{2192} Global rules.md\n"
+    );
+    // The payload itself does warn at that budget.
+    assert!(stdout(&v.cli(&["bootstrap"])).contains("warning:"));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
