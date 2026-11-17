@@ -229,8 +229,8 @@ A tool argument that names a note (`read_note`, `context`, `edit_note`, `move_no
 | Matches | Result |
 | :--- | :--- |
 | One | The tool runs |
-| Several | The tool runs on none of them and returns their ids; the agent calls again with one |
-| None | `not found` |
+| Several | The tool runs on none of them and returns their ids, sorted, as a normal result; the agent calls again with one |
+| None | An error: `"<name>" not found`, quoting the name as given |
 
 ```
 read_note("index")
@@ -281,7 +281,7 @@ With `section`, the tool returns that section only, with the section's checksum 
 
 ---
 
-## 8. `context(note)`
+## 8. `context(note, page?)`
 
 Shows what surrounds a note without reading its neighbors.
 
@@ -305,9 +305,15 @@ Links in:
 - **One level only, no `depth` argument:** to go further, the agent calls `context` again on a neighbor. The LLM decides where to jump (§1).
 - **Each link:** predicate, id (with its title when it differs, as in §4.2), and summary. Ghosts are marked `(not written yet)`, archive notes `(archive)`.
 - **Order:** outgoing links in written order; incoming links most recently changed first.
-- **One fact, one line:** an inverse pair (`has_part` in A, `part_of` in B) is shown once.
-- **Stores (§1.1):** bootstrap notes are never listed ([05-database-schema-specification.md §3.3](05-database-schema-specification.md#33-two-stage-graph-discovery)). Archive notes are listed with their marker.
-- **Limit:** 20 links per page, about 800 tokens (estimate). The last line says how many more exist.
+- **One fact, one line:**
+  - An inverse pair (`has_part` in A, `part_of` in B) is shown once, as the link the note itself wrote, under links out. So `context(A)` shows `has_part: B` and `context(B)` shows `part_of: A`.
+  - A link from the note to itself is shown once, under links out.
+  - Two links with the same predicate that resolve to the same note (`[[Caching]]` and `[[research/Caching]]`) are one line; the first written stays.
+- **Stores (§1.1):** bootstrap notes are never listed ([05-database-schema-specification.md §3.3](05-database-schema-specification.md#33-two-stage-graph-discovery)). Archive notes are listed with their marker. Any note can be the note asked about (§6.3), a bootstrap note included; its links to and from other bootstrap notes stay hidden.
+- **Page:** as in search (§4): `page` starts at 1 and defaults to 1, it is the number the "more" line names, and the CLI takes it as `--page <n>`.
+- **Limit:** up to 20 links per page, and a page stays under 1,000 tokens (estimated as characters ÷ 4). Links out come first, then links in, and a page fills across both. A link is never cut: a link that does not fit with its summary starts the next page, so a page of long summaries holds fewer links. Each page starts with the note's id and shows the `Links out:` and `Links in:` headings for the links it holds. Both numbers are tuning parameters, set with the retrieval benchmark ([02-open-questions-and-tradeoffs.md §11](02-open-questions-and-tradeoffs.md#11-target-scale--benchmark-resolved)).
+- **Closing lines:** as in search (§4.2). While more links exist, the last line is `5 more: page 2`; the last page has none. A page past the end prints one line, `Page 3 is past the end: 25 links on 2 pages.`, as a normal result, not an error.
+- **No links:** a note with no links to list prints one line, `No links to or from a/Alone.`, with the id shown as in §4.2. It is a normal result, not an error, on every page number.
 
 ---
 
