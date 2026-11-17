@@ -66,19 +66,20 @@ The bootstrap is loaded as a tree, starting from `index.md` and following links 
 2. Follow its `## Relations` links depth-first, in the order they are written (`edges.position`).
 3. Load every note reached, then follow its links the same way.
 4. Never follow:
-   - inline `[[mentions]]` in prose;
+   - inline `[[mentions]]` in prose, and lines under `## Relations` without a relation word (`- [[Mentor]]`), which count as plain links ([03-markdown-format-and-edge-syntax.md §3](03-markdown-format-and-edge-syntax.md#3-graph-edge-syntax)). The payload does not mention them; `sync` warns and `lint` reports them;
    - `supersedes` links, which point at a retired version;
    - links in the reverse direction: a `part_of` written in the target note is not an edge out of the source;
    - links that leave the bootstrap;
    - ghost links, and notes already visited.
-5. Return one Markdown payload: each note's body under a heading with its title, with frontmatter and `## Relations` stripped.
+5. Return one Markdown payload: each note's content as written, with frontmatter and `## Relations` stripped, and a blank line between notes. When a note's content does not start with a `# ` heading line, `# <title>` is added above it ([03-markdown-format-and-edge-syntax.md §2](03-markdown-format-and-edge-syntax.md#2-note-anatomy--layout)), so every note starts with a heading. Nothing else is added or changed.
 
 **Selection is linking.** Bootstrap notes that no link reaches are not loaded. With ten personas in `behavior/personas/`, only the one that a loaded note links to is loaded. Switching persona means editing one link.
 
-- **Budget:** the payload size is measured on every load. Above the configured `bootstrap.max_tokens`, the result carries a warning. There are no fixed per-section token targets.
-- **CLI twin:** `recognitor bootstrap` prints the same payload, for harness hooks (§5.1). `recognitor bootstrap --list` prints which notes load, in order, without their content.
-- **No entry point:** `load_bootstrap` reads only the index. When the index has no `bootstrap/index.md` (no `bootstrap/` folder, no `index.md`, or a case twin), the tool returns one error line instead of the payload: ``error: bootstrap/index.md not found. Run `recognitor lint`.`` `recognitor bootstrap` prints the same line and exits with a non-zero code. A vault without a bootstrap is valid: the user decides whether the session-start hook calls it. `lint` names the cause ([02-open-questions-and-tradeoffs.md §8](02-open-questions-and-tradeoffs.md)).
-- **Ghost links in the tree:** the payload ends with one line listing them: `not loaded: behavior/personas/Mentor (not written yet)`. Without ghosts, the line is left out.
+- **Budget:** the payload size is measured on every load, as characters ÷ 4 of the payload with its ghost line. Above the configured `bootstrap.max_tokens` (default 4,000), the payload ends with one more line: `warning: the bootstrap is 7071 tokens (estimate), above bootstrap.max_tokens (4000)`. There are no fixed per-section token targets.
+- **CLI twin:** `recognitor bootstrap` prints the same payload, for harness hooks (§5.1). `recognitor bootstrap --list` prints which notes load, in order, without their content: one id per line (with its title when it differs, as in [07-interface-contracts.md §4.2](07-interface-contracts.md#42-output)), then the ghost line. It carries no budget warning.
+- **`## Relations` stripped:** from its heading to the next level-1 or level-2 heading, or to the end of the file, the same section the parser reads relations from.
+- **No entry point:** `load_bootstrap` reads only the index. When the index has no `bootstrap/index.md` (no `bootstrap/` folder, no `index.md`, or a case twin), the tool returns one error line instead of the payload: ``error: bootstrap/index.md not found. Run `recognitor lint`.`` `recognitor bootstrap` prints the same line on stderr, with nothing on stdout, and exits with a non-zero code. A vault without a bootstrap is valid: the user decides whether the session-start hook calls it. `lint` names the cause ([02-open-questions-and-tradeoffs.md §8](02-open-questions-and-tradeoffs.md)).
+- **Ghost links in the tree:** the payload ends with one line listing them: `not loaded: behavior/personas/Mentor (not written yet)`. Several ghosts share the line, in load order, each once, as their links wrote them: `not loaded: Mentor (not written yet), Tone (ambiguous)`. A link that matches more than one note says `(ambiguous)`. Without ghosts, the line is left out.
 
 ### 2.3 Writes
 
