@@ -248,8 +248,8 @@ read_note("index")
 
 Returns one note. Predictable by design: the content always comes from that one file.
 
-- **Input:** `note` (an id, path or link name, §6.3), optional `section` (a heading), optional `query` (used only when the note is too long, §7.2).
-- **Output:** the whole file exactly as on disk, frontmatter included, so an overwrite built from it never loses tags or type. The tool adds one header line above it:
+- **Input:** `note` (an id, path or link name, §6.3), optional `section` (a heading), optional `query` (used only when the note is too long, §7.2). The CLI takes them as `--section <heading>` and `--query <text>` (§12).
+- **Output:** the whole file exactly as on disk, frontmatter included, so an overwrite built from it never loses tags or type. The tool adds one header line above it: the id, with its title when it differs (§4.2), two spaces, and the checksum:
 
 ```
 recognitor/Decisions  checksum: 3fa9c1e2b7d0
@@ -260,6 +260,8 @@ type: hub
 ...
 ```
 
+- **Sections:** a section is a heading and everything under it, up to the next heading of the same or a higher level, so its subsections stay inside it. Only headings at the top level of the note count; a heading inside a list item or a quote is text. A section's name is its heading text as written, without the `#` marks or setext underline, inline markup kept: ``## The `foo` flag`` is named ``The `foo` flag``. The note's first heading is its title, not a section, when it is an H1, as for the indexer's title (doc 03 §2). A note whose first heading is `##` or lower has no title heading, so every heading in it is a section, and a later `#` heading is a top-level section. Everything before the first heading after the title is the **head**: frontmatter, title, summary and any other text there. A **top-level section** is one that is not inside another. `section` can name a heading at any level. Headings are found with the parser the indexer uses, so a heading-shaped line inside code is text ([03-markdown-format-and-edge-syntax.md §3](03-markdown-format-and-edge-syntax.md#code-is-never-parsed)). The `## Relations` section (doc 03 §3) follows the same rule.
+
 ### 7.1 Short Checksums
 
 Tools show and accept the first 12 hex characters of the note's SHA-256 checksum instead of all 64. Twelve characters are enough to detect a change to one note, and they save about 30 tokens on every read and edit. The database keeps the full hash.
@@ -269,15 +271,57 @@ Tools show and accept the first 12 hex characters of the note's SHA-256 checksum
 A safety net for huge notes such as session transcripts. The average note in the reference vault is about 600 tokens (estimate), so normal notes are never cut.
 
 - **Limit:** `read.max_tokens` in the config, default 4,000.
-- **Always kept:** frontmatter, title and summary. The frontmatter tells the agent what kind of note it is (`type`, `tags`, `status`).
-- **Then:** the sections that best match `query`, until the limit. Sections are scored in memory at read time (one file, so no index is needed). Without `query`, sections are taken in file order.
+- **What counts:** the whole output, header line and closing line included, as in search and `context`. A note is cut only when its whole output would be over the limit.
+- **A head over the limit:** the frontmatter stays whole. The rest of the head follows block by block (the title, paragraphs, lists, code blocks), each whole and in order, while it fits. The first block that does not fit ends the head, and the blocks after it are not shown; they cannot be read in parts. Sections that fit are still filled in after a head that ended early. When the note has no sections at all, the closing line says so: `[cut at 4000 tokens. The rest has no headings, so it cannot be read in parts.]`
+- **Always kept:** the head (§7): frontmatter, title, summary and any other text before the first heading. The frontmatter tells the agent what kind of note it is (`type`, `tags`, `status`).
+- **Then:** the top-level sections that best match `query`, whole, until the limit. Without `query`, sections are taken in file order.
+- **Ranking:** `query` follows search's query text rules (§4). Sections that contain every query word come first, then sections that contain any of them, then the rest in file order, as §4.2 picks observation lines. Within each group, the better match comes first by the BM25 rank search uses, with the same tokenizer, so a word matches its other forms as it does in search. The ranking runs on a temporary in-memory table built at read time; nothing is stored. A query with no words left counts as no query, not as an error, because it only guides the cut.
+- **Fill:** sections are taken in rank order. A section that does not fit is skipped and the next one is tried, so one large section does not keep smaller ones out. A section is never cut; a skipped one is named in the closing line.
 - **Shown in file order:** sections are picked by relevance but displayed in their original order, so the note still reads naturally.
-- **Closing line,** added by the tool, never part of the note: `[cut at 4,000 tokens. Not shown: "Storage", "Search". Read one with section: "Storage"]`.
+- **Closing line,** added by the tool, never part of the note. One line in brackets, right after the shown text, with no blank line before it. It is built from the parts below, in table order; each part appears only when it applies, and each part but the last ends with a period:
+
+```
+[cut at 4000 tokens. Shown, with checksums: "Storage" 9b1e04c2aa71, "Search" 51c0e3f2d8aa. Not shown: "Index", "Notes". Read one with section: "Index"]
+```
+
+| Part | When |
+| :--- | :--- |
+| `cut at 4000 tokens.`: the limit in plain digits, as in the bootstrap warning | Always |
+| `Shown, with checksums: "Storage" 9b1e04c2aa71, …`: shown sections in file order, each with its section checksum (§7.3) | Some section is shown |
+| `Not shown: "Index", "Notes". Read one with section: "Index"`: best match first (file order without `query`); the hint names the first | Some section is not shown |
+| `Part of the head is not shown; it cannot be read in parts.` | Head blocks were left out and the note has sections |
+| `The rest has no headings, so it cannot be read in parts.` | The note has no sections |
+
+  Sections are named by their heading text as written, numbered when siblings share a name (§7.3). Only top-level sections are listed, so each name is also its path.
 - **No whole-note checksum on a cut read:** the header line carries no checksum, and the closing line lists each shown section's checksum instead. An agent can never overwrite the whole note from a partial copy and silently delete the sections it did not see.
 
 ### 7.3 One Section
 
 With `section`, the tool returns that section only, with the section's checksum in the header line, ready for `replace_section` (§5.2).
+
+```
+recognitor/Decisions > Storage  checksum: 9b1e04c2aa71
+## Storage
+Text…
+### Write lock
+Text…
+```
+
+- **Header line:** the id (as in §4.2, so a titled note reads `a/N, titled "T" > Storage  checksum: …`), ` > `, the section's path from its top-level section (`Storage`, `Storage > Write lock`), two spaces, and the checksum. The path is the one `section` takes back.
+- **Body:** the section exactly as on disk, from the start of its heading line to the start of the next heading of the same or a higher level, or the end of the file. Subsections and trailing blank lines are included.
+- **Section checksum:** the first 12 hex characters (§7.1) of the SHA-256 of exactly the body's bytes. `read_note` and the `replace_section` guard (§5.2) compute it the same way, so an edit inside the section changes it and an edit outside it does not.
+- **A section over the limit:** cut like a note (§7.2), one level down. Its head is its heading line and the text before its first subsection; its subsections are ranked by `query` and filled as top-level sections are. The header line carries no checksum, and the closing line names subsections by their paths: `Not shown: "Verbatim > Day 2". Read one with section: "Verbatim > Day 2"`.
+
+- **Matching:** `section` names a heading by its text, compared in lowercase and without its `#` marks, as note names are (§6.3): `"storage"`, `"Storage"` and `"## Storage"` all match `## Storage`. A plain name matches a heading at any level. A path of headings from a top-level section through its direct children, joined by ` > `, names a heading inside others: `"Storage > Notes"`. When sibling sections share a name (compared in lowercase), each gets its number among them, from 1 in file order: `Notes [1]`, `Notes [2]`; a unique name stays plain. Numbered names work in paths (`"Storage > Notes [2]"`), and every list of sections shows them, so any name shown can be passed back. ` > ` is used because headings often contain `/` (`## Read/write`).
+- **Several matches:** a normal result that returns no section and lists each match by its path, so the agent calls again with one. The id is shown as in §4.2:
+
+```
+"Notes" matches 2 sections in a/N. Call again with one:
+  Storage > Notes
+  Search > Notes
+```
+
+- **No match:** an error that lists the note's top-level sections, so the agent can retry without another read (§5.3): `No section "Storge" in a/N. Sections: "Storage", "Search".` A note with no sections at all says so instead: `No section "Storge" in a/N. The note has no sections.`
 
 ---
 
@@ -384,6 +428,7 @@ The CLI has no `write`, `edit` or `delete` commands. A human edits notes in an e
 | `ghosts`, `lint [--strict]`, `trash empty` | Maintenance |
 | `sync`, `rebuild`, `config get/set` | Engine control |
 
+- **Same arguments as MCP:** a CLI command takes its MCP tool's arguments by the same names. The first required argument is positional, and every optional one is an option with its name: `search <query> --ns <name> --page <n>`, `context <note> --page <n>`, `read <note> --section <heading> --query <text>`.
 - **Which vault:** the `--vault <path>` flag, else the `RECOGNITOR_VAULT` environment variable, else `vault.path` in the config file. With none of them set, the command fails with an error that names all three. Sessions, hooks and the MCP server start in code repos, not in the vault, so the vault is never guessed from the current folder. The MCP server finds its vault the same way.
 - **Config file:** `config.toml` in the per-user local config folder, `ProjectDirs::config_local_dir()` from the `directories` crate (Windows: `%LOCALAPPDATA%\recognitor\config\config.toml`). Local, not roaming, because a vault path belongs to one machine. The `RECOGNITOR_CONFIG` environment variable points at another config file, for tests and portable setups. `config get/set` reads and writes it and keeps comments and unknown keys; keys follow the `section.name` style ([05-database-schema-specification.md §5](05-database-schema-specification.md#5-database-file-location)).
 
