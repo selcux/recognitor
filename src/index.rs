@@ -263,6 +263,19 @@ impl Index {
         crate::context::context(&self.conn, note, page)
     }
 
+    /// `recognitor read`: the stale-gated sweep (doc 02 §4), then the note's file (doc 07 §7). `max_tokens` is
+    /// `read.max_tokens`; `section` and `query` are doc 07 §7's arguments.
+    pub fn read(
+        &mut self,
+        note: &str,
+        section: Option<&str>,
+        query: Option<&str>,
+        max_tokens: usize,
+    ) -> Result<crate::read::Read> {
+        self.sync_if_stale(SweepOptions::default())?;
+        crate::read::read(&self.conn, &self.root, note, section, query, max_tokens)
+    }
+
     /// `recognitor bootstrap`: the stale-gated sweep (doc 02 §4), then the bootstrap walk (doc 04 §2.2).
     pub fn bootstrap(&mut self) -> Result<crate::bootstrap::Bootstrap> {
         self.sync_if_stale(SweepOptions::default())?;

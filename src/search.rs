@@ -156,7 +156,7 @@ pub fn match_expression(text: &str) -> Option<String> {
     expression_of(&query_parts(text), " AND ")
 }
 
-fn expression_of(parts: &[&str], joiner: &str) -> Option<String> {
+pub(crate) fn expression_of(parts: &[&str], joiner: &str) -> Option<String> {
     let quoted: Vec<String> = parts
         .iter()
         .map(|p| format!("\"{}\"", p.replace('"', "\"\"")))
@@ -165,7 +165,7 @@ fn expression_of(parts: &[&str], joiner: &str) -> Option<String> {
 }
 
 /// The words and quoted phrases of a query, as [`match_expression`] reads them.
-fn query_parts(text: &str) -> Vec<&str> {
+pub(crate) fn query_parts(text: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut rest = text.trim_start();
     while !rest.is_empty() {

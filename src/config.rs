@@ -2,8 +2,8 @@
 //! file", doc 05 §5).
 //!
 //! The file is `config.toml` in the per-user local config folder. Keys follow the `section.name` style and are
-//! stored as `[section]` tables with a string value, except [`BOOTSTRAP_MAX_TOKENS_KEY`], a whole number. Only
-//! three keys exist so far: [`KEYS`].
+//! stored as `[section]` tables with a string value, except the `max_tokens` keys, whole numbers. Only four keys
+//! exist so far: [`KEYS`].
 
 use std::ffi::OsString;
 use std::fs;
@@ -24,8 +24,20 @@ pub const DB_PATH_KEY: &str = "db.path";
 /// Token budget of the bootstrap payload (doc 04 §2.2, doc 05 §5). A whole number of at least 1, stored as a TOML
 /// integer.
 pub const BOOTSTRAP_MAX_TOKENS_KEY: &str = "bootstrap.max_tokens";
+/// Token limit of one `read_note` result (doc 07 §7.2). A whole number of at least 1, stored as a TOML integer.
+pub const READ_MAX_TOKENS_KEY: &str = "read.max_tokens";
 /// The config keys that exist so far.
-pub const KEYS: [&str; 3] = [VAULT_PATH_KEY, DB_PATH_KEY, BOOTSTRAP_MAX_TOKENS_KEY];
+pub const KEYS: [&str; 4] = [
+    VAULT_PATH_KEY,
+    DB_PATH_KEY,
+    BOOTSTRAP_MAX_TOKENS_KEY,
+    READ_MAX_TOKENS_KEY,
+];
+
+/// The keys that hold a whole number of at least 1.
+fn is_count_key(key: &str) -> bool {
+    key == BOOTSTRAP_MAX_TOKENS_KEY || key == READ_MAX_TOKENS_KEY
+}
 
 /// Where the config file lives: [`CONFIG_ENV`] when set and non-empty, else `config.toml` in
 /// `ProjectDirs::config_local_dir()` (doc 07 §12).
@@ -75,7 +87,7 @@ pub fn get(path: &Path, key: &str) -> Result<Option<String>> {
     };
     match doc.get(section).and_then(Item::as_table_like).and_then(|s| s.get(name)) {
         None => Ok(None),
-        Some(item) if key == BOOTSTRAP_MAX_TOKENS_KEY => match item.as_integer() {
+        Some(item) if is_count_key(key) => match item.as_integer() {
             Some(n) if n >= 1 => Ok(Some(n.to_string())),
             _ => Err(bad(format!("{key} must be a whole number of at least 1"))),
         },
@@ -91,6 +103,11 @@ pub fn bootstrap_max_tokens(path: &Path) -> Result<Option<usize>> {
     Ok(get(path, BOOTSTRAP_MAX_TOKENS_KEY)?.and_then(|v| v.parse().ok()))
 }
 
+/// `read.max_tokens` as a number, `None` when the file does not set it.
+pub fn read_max_tokens(path: &Path) -> Result<Option<usize>> {
+    Ok(get(path, READ_MAX_TOKENS_KEY)?.and_then(|v| v.parse().ok()))
+}
+
 /// Sets a known key, keeping everything else in the file as it is: other keys, comments and formatting. Creates the
 /// file and its folder when they are missing. `vault.path` must name an existing folder; it is stored as given.
 pub fn set(path: &Path, key: &str, value: &str) -> Result<()> {
@@ -101,7 +118,7 @@ pub fn set(path: &Path, key: &str, value: &str) -> Result<()> {
             reason: format!("{value} does not exist or is not a folder"),
         });
     }
-    let mut new_value = if key == BOOTSTRAP_MAX_TOKENS_KEY {
+    let mut new_value = if is_count_key(key) {
         let n = value
             .parse::<u32>()
             .ok()

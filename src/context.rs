@@ -10,7 +10,7 @@ use rusqlite::{Connection, params};
 use crate::bootstrap::estimate_tokens;
 use crate::error::{Error, Result};
 use crate::paths::{ARCHIVE_NAMESPACE, note_id, titled_id};
-use crate::resolve::{NoteLookup, find_note};
+use crate::resolve::{NoteLookup, find_note, several_text};
 
 /// Most links on one page, links out and links in counted together (doc 07 §8, "Limit"). A tuning parameter, set
 /// with the retrieval benchmark.
@@ -364,13 +364,7 @@ fn links_in(conn: &Connection, key: &str, out: &[Out]) -> Result<Vec<LinkIn>> {
 /// The text of doc 07 §8, or the list of doc 07 §6.3 when the name matched several notes.
 pub fn render(context: &Context) -> String {
     match context {
-        Context::Several { name, ids } => {
-            let mut text = format!("\"{name}\" matches {} notes. Call again with one id:\n", ids.len());
-            for id in ids {
-                text.push_str(&format!("  {id}\n"));
-            }
-            text
-        }
+        Context::Several { name, ids } => several_text(name, ids),
         Context::Page(page) => render_page(page),
     }
 }

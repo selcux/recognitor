@@ -28,6 +28,13 @@ pub enum Error {
     EmptyQuery,
     /// A note named in a tool call matches no note (doc 07 §6.3). Holds the name as given.
     NoteNotFound(String),
+    /// `read_note` with a `section` that names no heading of the note (doc 07 §7.3, "No match"). `note` is the id as
+    /// doc 07 §4.2 shows it; `sections` are the note's top-level sections.
+    NoSection {
+        note: String,
+        name: String,
+        sections: Vec<String>,
+    },
     /// `load_bootstrap` found no `bootstrap/index.md` in the index: no folder, no file, or a case twin that was left
     /// out (doc 04 §2.2, "No entry point"). Its text is the one error line of the doc, without the `error: ` prefix
     /// that the CLI adds.
@@ -91,6 +98,15 @@ impl fmt::Display for Error {
             Error::NoBootstrap => write!(f, "bootstrap/index.md not found. Run `recognitor lint`."),
             // Doc 07 §6.3: `not found`. The name is quoted as in the "matches N notes" line.
             Error::NoteNotFound(name) => write!(f, "\"{name}\" not found"),
+            Error::NoSection { note, name, sections } => {
+                let listed: Vec<String> = sections.iter().map(|s| format!("\"{s}\"")).collect();
+                if listed.is_empty() {
+                    // Not in doc 07 §7.3: a note with no sections has none to list.
+                    write!(f, "No section \"{name}\" in {note}. The note has no sections.")
+                } else {
+                    write!(f, "No section \"{name}\" in {note}. Sections: {}.", listed.join(", "))
+                }
+            }
             Error::NoCacheDir => write!(f, "no per-user cache directory found; set RECOGNITOR_DB"),
             Error::ForeignDatabase(db) => write!(
                 f,
@@ -114,6 +130,7 @@ impl std::error::Error for Error {
             Error::Vault(_)
             | Error::EmptyQuery
             | Error::NoteNotFound(_)
+            | Error::NoSection { .. }
             | Error::NoBootstrap
             | Error::NoCacheDir
             | Error::NoConfigDir

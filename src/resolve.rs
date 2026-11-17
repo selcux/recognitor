@@ -150,6 +150,16 @@ pub fn find_note(conn: &Connection, name: &str) -> Result<NoteLookup> {
     })
 }
 
+/// The result text when a name matched several notes (doc 07 §6.3): the ids, sorted, for the agent to pick one.
+/// Shared by every tool that names a note.
+pub fn several_text(name: &str, ids: &[String]) -> String {
+    let mut text = format!("\"{name}\" matches {} notes. Call again with one id:\n", ids.len());
+    for id in ids {
+        text.push_str(&format!("  {id}\n"));
+    }
+    text
+}
+
 /// `(key, path)` of every note in `ns` whose filename or title matches `name`. The unary `+` keeps SQLite from
 /// choosing the namespace index over the name indexes.
 fn names_in(conn: &Connection, ns: &str, name: &str) -> Result<Vec<(String, String)>> {

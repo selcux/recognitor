@@ -1,6 +1,6 @@
 //! `recognitor` CLI: a thin layer over the library. Commands are defined in doc 07 §12.
 //!
-//! Shadow mode builds `sync`, `rebuild`, `search`, `context`, `bootstrap` and `config get/set`. The vault comes from
+//! Shadow mode builds `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap` and `config get/set`. The vault comes from
 //! `--vault`, else `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
 
 use std::path::PathBuf;
@@ -9,11 +9,13 @@ use std::process::ExitCode;
 use recognitor::bootstrap::DEFAULT_MAX_TOKENS;
 use recognitor::config::{self, VAULT_ENV};
 use recognitor::paths::DB_ENV;
+use recognitor::read::DEFAULT_MAX_TOKENS as READ_DEFAULT_MAX_TOKENS;
 use recognitor::{Error, Index, SweepOptions, report};
 
 const USAGE: &str = "usage: recognitor <command> [--vault <path>] [--report]
        recognitor search <query> [--vault <path>] [--ns <namespace>] [--page <n>]
        recognitor context <note> [--vault <path>] [--page <n>]
+       recognitor read <note> [--section <heading>] [--query <text>] [--vault <path>]
        recognitor bootstrap [--list] [--vault <path>]
        recognitor config get <key>
        recognitor config set <key> <value>
@@ -23,17 +25,20 @@ commands:
   rebuild                   drop the index and re-index the whole vault
   search <query>            full-text search
   context <note>            the links around one note: an id, a path or a link name
+  read <note>               one note under a header line with its checksum; --section reads one part, a long note is cut
   bootstrap                 print the bootstrap payload (the notes linked from bootstrap/index.md)
   config get <key>          print a config value
   config set <key> <value>  set a config value
 
-config keys: vault.path, db.path, bootstrap.max_tokens
+config keys: vault.path, db.path, bootstrap.max_tokens, read.max_tokens
 
 options:
   --vault <path>   vault root; else RECOGNITOR_VAULT, else vault.path in the config file
   --report         list every warning and print shadow-mode diagnostics
   --ns <name>      search: the namespace as a ranking perspective
   --page <n>       search, context: page number, from 1
+  --section <h>    read: only this section, by heading text or a path (`Storage > Notes`)
+  --query <text>   read: guides which sections stay when a long note is cut
   --list           bootstrap: list the notes that load, in order, without their content
   -V, --version    print the version
 
@@ -56,6 +61,11 @@ enum Command {
         note: String,
         page: usize,
     },
+    Read {
+        note: String,
+        section: Option<String>,
+        query: Option<String>,
+    },
     Bootstrap {
         list: bool,
     },
@@ -75,6 +85,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let mut ns = None;
     let mut page = 1;
     let mut list = false;
+    let mut section = None;
+    let mut query = None;
     let mut args = args;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -82,6 +94,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             "--vault" => vault = Some(PathBuf::from(args.next().ok_or("--vault needs a path")?)),
             "--report" => report = true,
             "--list" => list = true,
+            "--section" => section = Some(args.next().ok_or("--section needs a heading")?),
+            "--query" => query = Some(args.next().ok_or("--query needs text")?),
             "--ns" => ns = Some(args.next().ok_or("--ns needs a namespace")?),
             "--page" => {
                 page = args
@@ -98,6 +112,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let rest: Vec<String> = words.collect();
     if ns.is_some() && name != "search" {
         return Err("--ns belongs to search".to_string());
+    }
+    if (section.is_some() || query.is_some()) && name != "read" {
+        return Err("--section and --query belong to read".to_string());
     }
     if list && name != "bootstrap" {
         return Err("--list belongs to bootstrap".to_string());
@@ -116,13 +133,19 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             note: note.clone(),
             page,
         },
+        ("read", []) => return Err("read needs a note".to_string()),
+        ("read", [note]) => Command::Read {
+            note: note.clone(),
+            section,
+            query,
+        },
         ("bootstrap", []) => Command::Bootstrap { list },
         ("config", [sub, key]) if sub == "get" => Command::Config(ConfigCommand::Get(key.clone())),
         ("config", [sub, key, value]) if sub == "set" => {
             Command::Config(ConfigCommand::Set(key.clone(), value.clone()))
         }
         ("config", _) => return Err("usage: config get <key> | config set <key> <value>".to_string()),
-        ("sync" | "rebuild" | "search" | "context" | "bootstrap", [extra, ..]) => {
+        ("sync" | "rebuild" | "search" | "context" | "read" | "bootstrap", [extra, ..]) => {
             return Err(format!("unexpected argument: {extra}"));
         }
         (other, _) => return Err(format!("unknown command: {other}")),
@@ -174,6 +197,15 @@ fn run(args: &Args) -> recognitor::Result<String> {
             *page,
         )?)),
         Command::Context { note, page } => Ok(recognitor::context::render(&index.context(note, *page)?)),
+        Command::Read { note, section, query } => {
+            let max_tokens = config::read_max_tokens(&config_file)?.unwrap_or(READ_DEFAULT_MAX_TOKENS);
+            Ok(recognitor::read::render(&index.read(
+                note,
+                section.as_deref(),
+                query.as_deref(),
+                max_tokens,
+            )?))
+        }
         Command::Bootstrap { list } => {
             let bootstrap = index.bootstrap()?;
             if *list {
