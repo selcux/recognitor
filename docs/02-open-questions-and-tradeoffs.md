@@ -45,7 +45,7 @@ Resolved in favor of **deterministic on-demand reconciliation with a 2-second TT
 - **Stat-Only Sweep:** A directory walk compares each file's `(mtime, size)` against `(notes.mtime, notes.size)` in SQLite using cached file metadata. Only files whose metadata or existence changed are read. Deleted files cascade automatically (requires `PRAGMA foreign_keys = ON`).
 - **Developer & Agent Ergonomics:**
   - `recognitor sync`: Explicit CLI command to force an mtime sweep and report dirty files.
-  - `recognitor rebuild`: Nuclear command to drop tables and re-index the entire vault deterministically from canonical Markdown.
+  - `recognitor rebuild`: Nuclear command to delete the database file and re-index the entire vault deterministically from canonical Markdown.
 
 ### Sync Correctness Rules (DR1-06)
 
@@ -112,7 +112,7 @@ Resolved in favor of lightweight **Structural Linting** plus optional **vault-wi
   Hint, never an error, even with `--strict`: the vault has no `bootstrap/` folder. That is a valid setup, but `load_bootstrap` then returns an error.
 
   Syntax rules: [03-markdown-format-and-edge-syntax.md](03-markdown-format-and-edge-syntax.md).
-- **Ingestion Tolerance:** Invalid files trigger non-fatal diagnostic warnings during SQLite indexing rather than halting parsing or dropping notes from search. The exceptions are names: a non-ASCII name is not indexed, and neither are case twins, because indexing one would guess which file the user meant and indexing both would break link resolution. Both stay out until renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
+- **Ingestion Tolerance:** Invalid files trigger non-fatal diagnostic warnings during SQLite indexing rather than halting parsing or dropping notes from search. The exceptions are names: a non-ASCII name is not indexed, and neither are case twins, because indexing one would guess which file the user meant and indexing both would break link resolution. Both stay out until renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)). A file the sweep listed but can no longer read does not fail the sweep either: if it is gone (deleted, or replaced by an editor's save-and-rename), it counts as deleted; if it is locked or unreadable, it is skipped with a warning, and its indexed copy stays until a later sweep reads it.
 - **Type Schemas (DR1-12):** one file per vault, `<vault>/.recognitor/schemas.toml`, holds one block per note `type`. A block applies to every note with that `type`, in every namespace, bootstrap included:
 
   ```toml

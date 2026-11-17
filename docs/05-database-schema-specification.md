@@ -359,7 +359,11 @@ PRAGMA synchronous = NORMAL;    -- Safe with WAL; the database is rebuildable an
 
 ### 4.3 Schema Versioning
 
-`PRAGMA user_version` stores the engine's schema version. When a binary opens a database with a different version, it drops all tables and runs `rebuild`. Because the database is a projection of the Markdown files, schema changes need no migrations.
+`PRAGMA user_version` stores the engine's schema version. When a binary opens a database with a different version, it deletes the file (with its `-wal` and `-shm`) and runs `rebuild`. `rebuild` itself also starts from a new file. Deleting the file, not dropping tables, also removes virtual tables whose module is not loaded, such as `notes_vec` (§2.5). On Windows, a file another process holds open cannot be deleted, so the rebuild fails with that error.
+
+- **Only its own database:** before it changes anything, the binary checks that the file is a Recognitor database for this vault. A file with tables but no `meta.vault_root` (§2.6) is refused as foreign, and a `vault_root` that names another vault is refused as a mismatch (one database per vault, §5). Either way nothing is deleted. The `RECOGNITOR_DB` override (§5) can point at any file, so this check protects other apps' data.
+
+Because the database is a projection of the Markdown files, schema changes need no migrations.
 
 ---
 
