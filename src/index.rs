@@ -249,6 +249,13 @@ impl Index {
         self.sweep(SweepKind::Sync, opts, &|p| fs::read(p), &|_| {}).map(Some)
     }
 
+    /// `recognitor search`: the stale-gated sweep (doc 02 §4), then the full-text query (doc 07 §4). `page` counts
+    /// from 1.
+    pub fn search(&mut self, query: &str, ns: Option<&str>, page: usize) -> Result<crate::search::SearchPage> {
+        self.sync_if_stale(SweepOptions::default())?;
+        crate::search::search(&self.conn, query, ns, page)
+    }
+
     fn sweep<F: Fn(WalkPoint<'_>) + Sync>(
         &mut self,
         kind: SweepKind,

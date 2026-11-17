@@ -26,6 +26,16 @@ pub fn note_key(rel_path: &str) -> String {
     note_id(rel_path).to_lowercase()
 }
 
+/// A note id as every output shows it (doc 07 §4.2, "Line 1"): the id alone, or, when the title differs from the
+/// filename by key, `<id>, titled "<title>"`. The title is as written, quotes inside it included. Search and
+/// `context` share this form.
+pub fn titled_id(id: &str, title: Option<&str>) -> String {
+    match title {
+        Some(title) => format!("{id}, titled \"{title}\""),
+        None => id.to_string(),
+    }
+}
+
 /// Namespace of a note key: its top-level folder. `None` for a key without a folder: files directly in the vault
 /// root are not notes (doc 03 §4).
 pub fn namespace_of_key(key: &str) -> Option<&str> {

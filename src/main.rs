@@ -1,55 +1,154 @@
 //! `recognitor` CLI: a thin layer over the library. Commands are defined in doc 07 §12.
 //!
-//! Shadow mode builds `sync` and `rebuild` only. The vault is passed with `--vault`: the docs do not say yet where the
-//! CLI learns the vault root.
+//! Shadow mode builds `sync`, `rebuild`, `search` and `config get/set`. The vault comes from `--vault`, else
+//! `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use recognitor::{Index, SweepOptions, report};
+use recognitor::config::{self, VAULT_ENV};
+use recognitor::paths::DB_ENV;
+use recognitor::{Error, Index, SweepOptions, report};
 
-const USAGE: &str = "usage: recognitor <command> --vault <path> [--report]
+const USAGE: &str = "usage: recognitor <command> [--vault <path>] [--report]
+       recognitor search <query> [--vault <path>] [--ns <namespace>] [--page <n>]
+       recognitor config get <key>
+       recognitor config set <key> <value>
 
 commands:
-  sync       sweep the vault and index changed files
-  rebuild    drop the index and re-index the whole vault
+  sync                      sweep the vault and index changed files
+  rebuild                   drop the index and re-index the whole vault
+  search <query>            full-text search
+  config get <key>          print a config value
+  config set <key> <value>  set a config value
+
+config keys: vault.path, db.path
 
 options:
-  --vault <path>   vault root (required)
+  --vault <path>   vault root; else RECOGNITOR_VAULT, else vault.path in the config file
   --report         list every warning and print shadow-mode diagnostics
+  --ns <name>      search: the namespace as a ranking perspective
+  --page <n>       search: page number, from 1
   -V, --version    print the version
 
-The database lives in the per-user cache directory; RECOGNITOR_DB overrides its path.";
+The database lives in the per-user cache directory; RECOGNITOR_DB or db.path in the config file overrides its path.";
+
+enum ConfigCommand {
+    Get(String),
+    Set(String, String),
+}
 
 enum Command {
     Sync,
     Rebuild,
+    Search {
+        query: String,
+        ns: Option<String>,
+        page: usize,
+    },
+    Config(ConfigCommand),
 }
 
 struct Args {
     command: Command,
-    vault: PathBuf,
+    vault: Option<PathBuf>,
     report: bool,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String> {
-    let mut command = None;
+    let mut positional: Vec<String> = Vec::new();
     let mut vault = None;
     let mut report = false;
-    let mut args = args.peekable();
+    let mut ns = None;
+    let mut page = 1;
+    let mut args = args;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--version" | "-V" => return Ok(None),
             "--vault" => vault = Some(PathBuf::from(args.next().ok_or("--vault needs a path")?)),
             "--report" => report = true,
-            "sync" if command.is_none() => command = Some(Command::Sync),
-            "rebuild" if command.is_none() => command = Some(Command::Rebuild),
-            other => return Err(format!("unexpected argument: {other}")),
+            "--ns" => ns = Some(args.next().ok_or("--ns needs a namespace")?),
+            "--page" => {
+                page = args
+                    .next()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .filter(|p| *p >= 1)
+                    .ok_or("--page needs a number from 1")?;
+            }
+            _ => positional.push(arg),
         }
     }
-    let command = command.ok_or("no command given")?;
-    let vault = vault.ok_or("--vault is required")?;
+    let mut words = positional.into_iter();
+    let name = words.next().ok_or("no command given")?;
+    let rest: Vec<String> = words.collect();
+    if ns.is_some() && name != "search" {
+        return Err("--ns belongs to search".to_string());
+    }
+    let command = match (name.as_str(), rest.as_slice()) {
+        ("sync", []) => Command::Sync,
+        ("rebuild", []) => Command::Rebuild,
+        ("search", []) => return Err("search needs a query".to_string()),
+        ("search", [query]) => Command::Search {
+            query: query.clone(),
+            ns,
+            page,
+        },
+        ("config", [sub, key]) if sub == "get" => Command::Config(ConfigCommand::Get(key.clone())),
+        ("config", [sub, key, value]) if sub == "set" => {
+            Command::Config(ConfigCommand::Set(key.clone(), value.clone()))
+        }
+        ("config", _) => return Err("usage: config get <key> | config set <key> <value>".to_string()),
+        ("sync" | "rebuild" | "search", [extra, ..]) => return Err(format!("unexpected argument: {extra}")),
+        (other, _) => return Err(format!("unknown command: {other}")),
+    };
+    if vault.is_some() && matches!(command, Command::Config(_)) {
+        return Err("--vault does not apply to config".to_string());
+    }
     Ok(Some(Args { command, vault, report }))
+}
+
+fn run_config(cmd: &ConfigCommand) -> recognitor::Result<String> {
+    let config_file = config::config_path()?;
+    match cmd {
+        ConfigCommand::Get(key) => config::get(&config_file, key)?
+            .map(|value| {
+                format!(
+                    "{value}
+"
+                )
+            })
+            .ok_or_else(|| Error::ConfigNotSet(key.clone())),
+        ConfigCommand::Set(key, value) => {
+            config::set(&config_file, key, value)?;
+            Ok(format!(
+                "{key} set in {}
+",
+                config_file.display()
+            ))
+        }
+    }
+}
+
+fn run(args: &Args) -> recognitor::Result<String> {
+    let opts = SweepOptions { report: args.report };
+    let command = match &args.command {
+        Command::Config(cmd) => return run_config(cmd),
+        other => other,
+    };
+    let config_file = config::config_path()?;
+    let vault = config::resolve_vault(args.vault.clone(), std::env::var_os(VAULT_ENV), &config_file)?;
+    let db = config::resolve_db(std::env::var_os(DB_ENV), &config_file)?;
+    let mut index = Index::open(&vault, db.as_deref())?;
+    match command {
+        Command::Sync => Ok(report::render(&index.sync(opts)?, args.report)),
+        Command::Rebuild => Ok(report::render(&index.rebuild(opts)?, args.report)),
+        Command::Search { query, ns, page } => Ok(recognitor::search::render(&index.search(
+            query,
+            ns.as_deref(),
+            *page,
+        )?)),
+        Command::Config(cmd) => run_config(cmd),
+    }
 }
 
 fn main() -> ExitCode {
@@ -64,19 +163,18 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let opts = SweepOptions { report: args.report };
-    let result = Index::open(&args.vault, None).and_then(|mut index| match args.command {
-        Command::Sync => index.sync(opts),
-        Command::Rebuild => index.rebuild(opts),
-    });
-    match result {
-        Ok(r) => {
-            print!("{}", report::render(&r, args.report));
+    match run(&args) {
+        Ok(text) => {
+            print!("{text}");
             ExitCode::SUCCESS
         }
         Err(e) => {
             eprintln!("error: {e}");
-            ExitCode::FAILURE
+            if e.is_usage() {
+                ExitCode::from(2)
+            } else {
+                ExitCode::FAILURE
+            }
         }
     }
 }
