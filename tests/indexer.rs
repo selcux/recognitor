@@ -4,13 +4,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use recognitor::db::{self, meta_keys};
 use recognitor::index::FullCause;
 use recognitor::parse::WarningKind;
-use recognitor::walk::{NameError, NameErrorKind, WalkPoint};
+use recognitor::walk::{NameError, NameErrorKind, WalkPoint, Walked, walk};
 use recognitor::{Index, SweepOptions, SweepReport};
 use rusqlite::OptionalExtension;
 
@@ -1435,7 +1436,7 @@ fn a_file_gone_after_the_walk_counts_as_deleted() {
                     fs::read(p)
                 }
             },
-            &mut |_| {},
+            &|_| {},
         )
         .unwrap();
     assert_eq!(r.deleted, vec!["ops/index".to_string()]);
@@ -1465,7 +1466,7 @@ fn an_unreadable_file_is_skipped_with_a_warning() {
                     fs::read(p)
                 }
             },
-            &mut |_| {},
+            &|_| {},
         )
         .unwrap();
     assert_eq!(warning_kinds(&r), vec![WarningKind::Unreadable]);
@@ -1528,13 +1529,13 @@ This one vanishes.
 }
 
 /// Deletes `docs/doomed.md` the moment the walk is about to stat it. Returns how often the hook fired for it.
-fn vanish_at_stat(fired: &mut usize) -> impl FnMut(WalkPoint<'_>) {
+fn vanish_at_stat(fired: &Mutex<usize>) -> impl Fn(WalkPoint<'_>) + Sync {
     move |point| {
         // `ends_with`, not `==`: the index may hold the vault root in another spelling than the test's.
         if let WalkPoint::BeforeStat(p) = point
             && p.ends_with("docs/doomed.md")
         {
-            *fired += 1;
+            *fired.lock().unwrap() += 1;
             let _ = fs::remove_file(p);
         }
     }
@@ -1544,11 +1545,11 @@ fn vanish_at_stat(fired: &mut usize) -> impl FnMut(WalkPoint<'_>) {
 fn a_file_that_vanishes_during_the_walk_is_never_indexed() {
     let v = vanish_vault("vanish-new");
     let mut index = v.open();
-    let mut fired = 0;
+    let fired = Mutex::new(0);
     let r = index
-        .sync_with_seams(opts(), &|p| fs::read(p), &mut vanish_at_stat(&mut fired))
+        .sync_with_seams(opts(), &|p| fs::read(p), &vanish_at_stat(&fired))
         .unwrap();
-    assert_eq!(fired, 1, "the hook saw the file");
+    assert_eq!(*fired.lock().unwrap(), 1, "the hook saw the file");
     assert_eq!(
         note_keys(&index),
         vec!["docs/alpha".to_string(), "docs/beta".to_string()]
@@ -1573,11 +1574,11 @@ Edited, then gone.
 ",
         100,
     );
-    let mut fired = 0;
+    let fired = Mutex::new(0);
     let r = index
-        .sync_with_seams(opts(), &|p| fs::read(p), &mut vanish_at_stat(&mut fired))
+        .sync_with_seams(opts(), &|p| fs::read(p), &vanish_at_stat(&fired))
         .unwrap();
-    assert_eq!(fired, 1);
+    assert_eq!(*fired.lock().unwrap(), 1);
     assert_eq!(r.deleted, vec!["docs/doomed".to_string()]);
     assert_eq!(
         note_keys(&index),
@@ -1712,4 +1713,81 @@ fn a_database_with_a_module_that_is_not_loaded_is_rebuilt() {
     assert_eq!(r.full, Some(FullCause::SchemaVersion(99)));
     assert_eq!(r.totals.notes, 13);
     assert_eq!(count(&index, vec_tables), 0);
+}
+
+/// Everything a walk reports, in the order it reports it, as one comparable value.
+fn walk_snapshot(w: &Walked) -> String {
+    let files: Vec<_> = w.files.iter().map(|f| (&f.rel, &f.key, f.mtime_ms, f.size)).collect();
+    let errors: Vec<_> = w
+        .name_errors
+        .iter()
+        .map(|e| (e.kind, &e.paths, e.notes_left_out))
+        .collect();
+    format!(
+        "{files:?}\n{errors:?}\n{:?}\n{:?}\n{:?} {} {} {:?}",
+        w.unreadable,
+        w.stats.hidden_dirs,
+        w.stats.other_files,
+        w.stats.root_md_files,
+        w.stats.symlinks,
+        w.stats.hidden_md_files
+    )
+}
+
+/// The walk runs folders in parallel; its result must not depend on thread timing (doc 02 §4, doc 03 §4).
+#[test]
+fn the_walk_result_is_the_same_on_every_run() {
+    let v = TestVault::new("walk-determinism");
+    if !v.case_sensitive() {
+        return;
+    }
+    let mut paths: Vec<String> = Vec::new();
+    for ns in ["alpha", "beta", "gamma", "delta"] {
+        for sub in ["one", "two", "three", "four"] {
+            for leaf in ["x", "y"] {
+                for i in 0..3 {
+                    paths.push(format!("{ns}/{sub}/{leaf}/n{i}.md"));
+                }
+            }
+            paths.push(format!("{ns}/{sub}/top.md"));
+        }
+        paths.push(format!("{ns}/index.md"));
+        paths.push(format!("{ns}/data.json"));
+        paths.push(format!("{ns}/.hidden/h.md"));
+    }
+    // A file twin and a folder twin in different folders, a non-ASCII file and folder in another, a hidden folder
+    // at the top, a file in the root, and a folder whose name is a prefix of a sibling's, to test path order.
+    for rel in [
+        "beta/one/Twin.md",
+        "beta/one/twin.MD",
+        "gamma/Same/a.md",
+        "gamma/same/b.md",
+        "gamma/same/deep/c.md",
+        "delta/two/k\u{131}rm\u{131}z\u{131}.md",
+        "delta/\u{c7}al\u{131}\u{15f}ma/d.md",
+        "alpha/three/a-b/e.md",
+        "alpha/three/a/f.md",
+        "root-note.md",
+        ".top-hidden/k.md",
+    ] {
+        paths.push(rel.to_string());
+    }
+    for rel in &paths {
+        v.write(rel, "# x\n", 0);
+    }
+
+    let first = walk(&v.root, true).unwrap();
+    assert_eq!(first.name_errors.len(), 4, "{:?}", first.name_errors);
+    let kinds: Vec<_> = first.name_errors.iter().map(|e| e.kind).collect();
+    assert_eq!(kinds.iter().filter(|k| **k == NameErrorKind::CaseTwin).count(), 2);
+    assert_eq!(kinds.iter().filter(|k| **k == NameErrorKind::NonAscii).count(), 2);
+    assert!(first.files.windows(2).all(|w| w[0].rel < w[1].rel), "sorted by path");
+    assert!(first.stats.hidden_dirs.windows(2).all(|w| w[0] < w[1]), "sorted");
+    assert_eq!(first.stats.hidden_dirs.len(), 5);
+    assert_eq!(first.stats.root_md_files, 1);
+    let expected = walk_snapshot(&first);
+    for run in 1..20 {
+        let again = walk(&v.root, true).unwrap();
+        assert_eq!(walk_snapshot(&again), expected, "run {run} differs from the first");
+    }
 }

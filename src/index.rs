@@ -217,22 +217,22 @@ impl Index {
 
     /// `recognitor rebuild`: drop every table and re-index the whole vault.
     pub fn rebuild(&mut self, opts: SweepOptions) -> Result<SweepReport> {
-        self.sweep(SweepKind::Rebuild, opts, &|p| fs::read(p), &mut |_| {})
+        self.sweep(SweepKind::Rebuild, opts, &|p| fs::read(p), &|_| {})
     }
 
     /// `recognitor sync`: a forced stat sweep, ignoring the TTL gate.
     pub fn sync(&mut self, opts: SweepOptions) -> Result<SweepReport> {
-        self.sweep(SweepKind::Sync, opts, &|p| fs::read(p), &mut |_| {})
+        self.sweep(SweepKind::Sync, opts, &|p| fs::read(p), &|_| {})
     }
 
     /// [`Index::sync`] with the file reader replaced and a hook in the walk. A test seam for files that vanish or lock
     /// between the walk and the read, or during the walk, which no test can time on a real file system.
     #[doc(hidden)]
-    pub fn sync_with_seams<F: FnMut(WalkPoint<'_>)>(
+    pub fn sync_with_seams<F: Fn(WalkPoint<'_>) + Sync>(
         &mut self,
         opts: SweepOptions,
         read: &FileReader<'_>,
-        hook: &mut F,
+        hook: &F,
     ) -> Result<SweepReport> {
         self.sweep(SweepKind::Sync, opts, read, hook)
     }
@@ -246,16 +246,15 @@ impl Index {
                 return Ok(None);
             }
         }
-        self.sweep(SweepKind::Sync, opts, &|p| fs::read(p), &mut |_| {})
-            .map(Some)
+        self.sweep(SweepKind::Sync, opts, &|p| fs::read(p), &|_| {}).map(Some)
     }
 
-    fn sweep<F: FnMut(WalkPoint<'_>)>(
+    fn sweep<F: Fn(WalkPoint<'_>) + Sync>(
         &mut self,
         kind: SweepKind,
         opts: SweepOptions,
         read: &FileReader<'_>,
-        hook: &mut F,
+        hook: &F,
     ) -> Result<SweepReport> {
         let timer = Instant::now();
         let root = self.root.clone();
@@ -419,7 +418,7 @@ impl Index {
 
 /// The sweep proper, inside the transaction `tx` that already holds the write lock.
 #[allow(clippy::too_many_arguments)]
-fn run_sweep<F: FnMut(WalkPoint<'_>)>(
+fn run_sweep<F: Fn(WalkPoint<'_>) + Sync>(
     tx: Transaction<'_>,
     root: &Path,
     root_display: &str,
@@ -427,7 +426,7 @@ fn run_sweep<F: FnMut(WalkPoint<'_>)>(
     full: Option<FullCause>,
     opts: SweepOptions,
     read: &FileReader<'_>,
-    hook: &mut F,
+    hook: &F,
 ) -> Result<(SweepReport, Counters, WalkStats)> {
     let start_ms = now_ms();
     if full.is_some() {

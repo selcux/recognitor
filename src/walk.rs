@@ -11,6 +11,8 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use rayon::prelude::*;
+
 use crate::error::{Error, Result};
 use crate::paths::{note_key, strip_md_ignore_case};
 
@@ -110,8 +112,12 @@ pub fn classify(entries: &[(String, EntryKind)]) -> Verdicts {
 
 /// Walks `root` and returns every `*.md` file under a top-level folder that is outside hidden folders and passes the
 /// name rules, sorted by path.
+///
+/// Folders are listed in parallel: every folder hands its subfolders to the thread pool, which steals work, so one
+/// huge namespace does not leave the other threads idle. Each folder builds its own partial result, and the parent
+/// merges the partials; every list in the result is sorted at the end, so the thread timing never shows.
 pub fn walk(root: &Path, count_hidden: bool) -> Result<Walked> {
-    walk_with_hook(root, count_hidden, &mut |_| {})
+    walk_with_hook(root, count_hidden, &|_| {})
 }
 
 /// A moment in the walk where a test can change the file system. Production passes a no-op hook.
@@ -124,11 +130,11 @@ pub enum WalkPoint<'a> {
     BeforeDescend(&'a Path),
 }
 
-/// [`walk`] with a hook called at each [`WalkPoint`]. Generic, so the no-op hook of `walk` costs nothing.
+/// [`walk`] with a hook called at each [`WalkPoint`], possibly from several threads at once. Generic, so the no-op
+/// hook of `walk` costs nothing.
 #[doc(hidden)]
-pub fn walk_with_hook<F: FnMut(WalkPoint<'_>)>(root: &Path, count_hidden: bool, hook: &mut F) -> Result<Walked> {
-    let mut walked = Walked::default();
-    walk_dir(root, "", &mut walked, hook)?;
+pub fn walk_with_hook<F: Fn(WalkPoint<'_>) + Sync>(root: &Path, count_hidden: bool, hook: &F) -> Result<Walked> {
+    let mut walked = walk_dir(root, "", hook).map_err(|failure| failure.error)?;
     if count_hidden {
         let mut n = 0;
         for rel in &walked.stats.hidden_dirs {
@@ -138,8 +144,45 @@ pub fn walk_with_hook<F: FnMut(WalkPoint<'_>)>(root: &Path, count_hidden: bool, 
     }
     walked.files.sort_by(|a, b| a.rel.cmp(&b.rel));
     walked.name_errors.sort_by(|a, b| a.paths.cmp(&b.paths));
+    walked.unreadable.sort();
+    walked.stats.hidden_dirs.sort();
     Ok(walked)
 }
+
+impl Walked {
+    /// Adds the partial result of a subfolder. The order of the lists is not kept: the caller sorts at the end.
+    fn absorb(&mut self, part: Walked) {
+        self.files.extend(part.files);
+        self.name_errors.extend(part.name_errors);
+        self.unreadable.extend(part.unreadable);
+        let (stats, part) = (&mut self.stats, part.stats);
+        stats.hidden_dirs.extend(part.hidden_dirs);
+        for (ext, n) in part.other_files {
+            *stats.other_files.entry(ext).or_default() += n;
+        }
+        stats.root_md_files += part.root_md_files;
+        stats.symlinks += part.symlinks;
+    }
+}
+
+/// A folder that could not be listed, with its vault-relative path so that the first failure in path order wins no
+/// matter which thread got there first.
+struct Failure {
+    rel: String,
+    error: Error,
+}
+
+impl Failure {
+    fn new(rel: &str, error: Error) -> Self {
+        Failure {
+            rel: rel.to_string(),
+            error,
+        }
+    }
+}
+
+/// A folder with fewer subfolders than this is walked on the calling thread: the thread pool costs more than it saves.
+const PARALLEL_MIN_SUBDIRS: usize = 2;
 
 /// A directory entry that took part in the name check.
 struct Pending {
@@ -150,20 +193,22 @@ struct Pending {
     stat: (i64, i64),
 }
 
-fn walk_dir<F: FnMut(WalkPoint<'_>)>(dir: &Path, rel_dir: &str, walked: &mut Walked, hook: &mut F) -> Result<()> {
+/// Walks one folder and everything below it. The result covers this subtree only.
+fn walk_dir<F: Fn(WalkPoint<'_>) + Sync>(dir: &Path, rel_dir: &str, hook: &F) -> std::result::Result<Walked, Failure> {
+    let mut walked = Walked::default();
     let at_root = rel_dir.is_empty();
     let mut pending: Vec<Pending> = Vec::new();
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         // A folder removed since its parent was listed: its notes are gone. The vault root itself must exist.
-        Err(e) if e.kind() == ErrorKind::NotFound && !at_root => return Ok(()),
-        Err(e) => return Err(Error::io(dir, e)),
+        Err(e) if e.kind() == ErrorKind::NotFound && !at_root => return Ok(walked),
+        Err(e) => return Err(Failure::new(rel_dir, Error::io(dir, e))),
     };
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
             Err(e) if e.kind() == ErrorKind::NotFound => continue,
-            Err(e) => return Err(Error::io(dir, e)),
+            Err(e) => return Err(Failure::new(rel_dir, Error::io(dir, e))),
         };
         // A name that is not valid UTF-8 comes out with U+FFFD, which is not ASCII, so the name rules catch it.
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -171,7 +216,7 @@ fn walk_dir<F: FnMut(WalkPoint<'_>)>(dir: &Path, rel_dir: &str, walked: &mut Wal
             Ok(t) => t,
             // Removed between the listing and this call.
             Err(e) if e.kind() == ErrorKind::NotFound => continue,
-            Err(e) => return Err(Error::io(entry.path(), e)),
+            Err(e) => return Err(Failure::new(rel_dir, Error::io(entry.path(), e))),
         };
         if file_type.is_symlink() {
             walked.stats.symlinks += 1;
@@ -249,16 +294,14 @@ fn walk_dir<F: FnMut(WalkPoint<'_>)>(dir: &Path, rel_dir: &str, walked: &mut Wal
         });
     }
 
+    let mut subdirs: Vec<(String, PathBuf)> = Vec::new();
     for (p, bad) in pending.into_iter().zip(bad) {
         if bad {
             continue;
         }
         let rel = join_rel(rel_dir, &p.name);
         match p.kind {
-            EntryKind::Dir => {
-                hook(WalkPoint::BeforeDescend(&p.path));
-                walk_dir(&p.path, &rel, walked, hook)?;
-            }
+            EntryKind::Dir => subdirs.push((rel, p.path)),
             EntryKind::MdFile => walked.files.push(FileEntry {
                 key: note_key(&rel),
                 rel,
@@ -268,7 +311,30 @@ fn walk_dir<F: FnMut(WalkPoint<'_>)>(dir: &Path, rel_dir: &str, walked: &mut Wal
             }),
         }
     }
-    Ok(())
+
+    let descend = |(rel, path): &(String, PathBuf)| {
+        hook(WalkPoint::BeforeDescend(path));
+        walk_dir(path, rel, hook)
+    };
+    let parts: Vec<std::result::Result<Walked, Failure>> = if subdirs.len() < PARALLEL_MIN_SUBDIRS {
+        subdirs.iter().map(descend).collect()
+    } else {
+        // `collect` on an indexed parallel iterator keeps the order of `subdirs`.
+        subdirs.par_iter().map(descend).collect()
+    };
+    let mut first_failure: Option<Failure> = None;
+    for part in parts {
+        match part {
+            Ok(part) => walked.absorb(part),
+            // Failures are in disjoint subtrees, so comparing the paths picks the first one in path order.
+            Err(f) if first_failure.as_ref().is_none_or(|g| f.rel < g.rel) => first_failure = Some(f),
+            Err(_) => {}
+        }
+    }
+    match first_failure {
+        Some(failure) => Err(failure),
+        None => Ok(walked),
+    }
 }
 
 fn join_rel(rel_dir: &str, name: &str) -> String {
@@ -326,6 +392,7 @@ pub fn mtime_ms(meta: &fs::Metadata) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -363,10 +430,10 @@ mod tests {
             )
             .expect("write file");
         }
-        let mut fired = Vec::new();
-        let walked = walk_with_hook(&root, false, &mut |point| {
+        let fired = Mutex::new(Vec::new());
+        let walked = walk_with_hook(&root, false, &|point| {
             if let WalkPoint::BeforeDescend(dir) = point {
-                fired.push(dir.to_path_buf());
+                fired.lock().expect("lock").push(dir.to_path_buf());
                 if dir.ends_with("gone") {
                     fs::remove_dir_all(dir).expect("remove the folder");
                 }
@@ -375,7 +442,10 @@ mod tests {
         .expect("the walk survives a vanished folder");
         let rels: Vec<&str> = walked.files.iter().map(|f| f.rel.as_str()).collect();
         assert_eq!(rels, ["keep/a.md", "other/d.md"]);
-        assert!(fired.iter().any(|d| d.ends_with("gone")), "the hook saw the folder");
+        assert!(
+            fired.lock().expect("lock").iter().any(|d| d.ends_with("gone")),
+            "the hook saw the folder"
+        );
         assert!(walked.name_errors.is_empty() && walked.unreadable.is_empty());
     }
 
