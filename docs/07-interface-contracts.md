@@ -71,6 +71,7 @@ A line ending in "page N" means more results exist.
 | `read_note` | Return a note's full text with its checksum. `section` returns one section. A note over the token limit is cut to its best sections; the closing line says how to read the rest. | `note`: an id, path or name. `section`: heading text as written. `query`: words that choose which sections to keep when the note is cut |
 | `write_note` | Create a note, or replace a whole note. Without `expected_checksum` it only creates; to replace a note, pass the checksum from `read_note`. To change part of a note, use `edit_note`. | `path`: from the vault root, `.md` optional. `content`: the whole file, frontmatter included. `expected_checksum`: the checksum of the version it replaces |
 | `edit_note` | Change part of a note without rewriting it. `append` adds text at the end of a section, `add_observation` and `add_relation` add one line, `find_replace` replaces text that occurs exactly once, `replace_section` replaces a section and needs its checksum from `read_note`. | `note`: an id, path or name. `op`: one of the five. `text`: the text to add, the line, the replacement or the new section. `section`: heading text, for `append` and `replace_section`. `find`: the exact text to replace, for `find_replace`. `expected_checksum`: the section's checksum, for `replace_section` |
+| `move_note` | Move or rename a note. Pass its checksum from `read_note`. Returns the links the move broke; show them to the user, who picks the notes `relink` fixes. Links inside the moved note are fixed with `edit_note`. | `note`: an id, path or name. `new_path`: from the vault root, `.md` optional. `expected_checksum`: the checksum of the version it moves |
 | `relink` | Rewrite the links that pointed to a moved note, in the notes the user chose. A link that is already gone is skipped with a warning. | `old`: the note's id before the move. `new`: an id, path or name. `notes`: the linking notes, each an id, path or name |
 | `delete_note` | Move a note to the vault trash. Pass its checksum from `read_note`. Returns the links that now point nowhere; show them to the user, who decides whether to fix them. | `note`: an id, path or name. `expected_checksum`: the checksum of the version it deletes |
 
@@ -82,7 +83,7 @@ A line ending in "page N" means more results exist.
 | Outcome | MCP | CLI |
 | :--- | :--- | :--- |
 | Error: `"x" not found`, `load_namespace("bootstrap")`, a query with no words, no such section, a refused write (§5.3) | A tool result with `isError: true`; its text is the message | `error: <message>` on stderr, exit 1 |
-| Normal result: no hits, several matches (§6.3), a page past the end, no links | A tool result with the text | The text on stdout, exit 0 |
+| Normal result: no hits, several matches (§6.3), a page past the end, no links, a move to where the note already is (§11) | A tool result with the text | The text on stdout, exit 0 |
 | Bad arguments: `query` missing, `page` not a number, an argument the tool does not take | As an error | `error: <message>` and the usage text on stderr, exit 2 |
 | Unknown tool: a name not in `tools/list` | A JSON-RPC error (`-32602`), as the MCP spec prescribes. Clients offer only listed tools, so agents do not reach it | No CLI twin: an unknown command is a bad argument |
 
@@ -210,23 +211,28 @@ A rejection carries a short reason plus the current version of the part that cla
 | :--- | :--- |
 | `replace_section` | The section as it is now, with its checksum |
 | `find_replace` | The whole note as it is now, with its checksum (X may have moved anywhere), cut at the read limit |
-| Create on an existing note, overwrite, `move_note`, `delete_note` | The whole note as it is now, with its checksum, cut at the read limit |
+| Create or move onto an existing note, overwrite, `move_note`, `delete_note` | The whole note as it is now (for a move onto a note, the note already there), with its checksum, cut at the read limit |
 | Create or move onto case twins | The path of every twin, without content |
 
 The rejection never repeats the agent's own request: the agent already has it in context.
 
-- **Cut like a read:** the current note is shown exactly as `read_note` shows it (§7), header line included. A note over the read limit is cut by §7.2 and carries only section checksums, so a partial copy can never be used to overwrite the whole note.
-- **An archive refusal returns nothing:** the agent cannot overwrite an archive note with any version (§1.1), so the message names the fix instead.
+- **Cut like a read:** the current note is shown exactly as `read_note` shows it (§7), header line included. A note over the read limit is cut by §7.2; its header line still carries the whole-note checksum, which `move_note` and `delete_note` accept and `write_note` never uses to overwrite such a note (§11).
+- **Archive and long-note refusals return nothing:** no version of the note would let the agent retry the same call (§1.1, §11), so the message names the fix instead.
 - **Texts:** each refusal is a reason, then the current data:
 
 | Refusal | Text |
 | :--- | :--- |
 | Create on an existing note | `The note already exists, so nothing was written. To replace it, call again with its checksum as expected_checksum. Current version:`, a line break, the note |
+| Create on an existing note over the read limit | `The note already exists and is too long to replace whole, so nothing was written. Change it with edit_note. Current version:`, a line break, the note |
 | Overwrite with a stale checksum | `The note changed since that checksum, so nothing was written. Current version:`, a line break, the note |
-| Create or move onto case twins | `Names that differ only in case cannot exist together, so nothing was written. On disk:`, then one path per line, indented two spaces, a folder ending in `/` |
+| Create onto case twins | `Names that differ only in case cannot exist together, so nothing was written. On disk:`, then one path per line, indented two spaces, a folder ending in `/` |
+| Move onto case twins | `Names that differ only in case cannot exist together, so nothing was moved. On disk:`, then the paths as for a create |
+| Move onto an existing note | `A note already exists at that path, so nothing was moved. Current version:`, a line break, the note already there |
+| `move_note` on an archive note | `Archive notes are append only: move_note never moves one. Only the user can move the file.` |
+| `move_note` with a stale checksum | `The note changed since that checksum, so nothing was moved. Current version:`, a line break, the note |
 | `write_note` with a checksum on an archive note | `Archive notes are append only: write_note never overwrites one. To add to it, use edit_note with append.` |
+| `write_note` with a checksum on a note over the read limit (§11) | `The note is too long to read whole, so write_note cannot replace it and nothing was written. Change it with edit_note, a section at a time.` |
 | `delete_note` on an archive note | `Archive notes are append only: delete_note never removes one. Only the user can delete the file.` |
-| `delete_note` on a note over the read limit (§10) | `The note is too long to read whole, so delete_note cannot check its checksum and nothing was deleted. Only the user can delete the file.` |
 | `delete_note` with a stale checksum | `The note changed since that checksum, so nothing was deleted. Current version:`, a line break, the note |
 | `find_replace`, `find` not in the note | `The text to replace was not found, so nothing was written. Current version:`, a line break, the note |
 | `find_replace`, `find` more than once (overlaps count) | `The text to replace occurs N times, so nothing was written; it must occur exactly once. Current version:`, a line break, the note |
@@ -273,7 +279,7 @@ An MCP tool cannot pause mid-call to ask the user, so a move takes two calls:
 
 | Link | Breaks because |
 | :--- | :--- |
-| `[[ideas/caching]]` | The path changed |
+| `[[b/Caching]]`, in an `ideas` note | The path changed |
 | `[[ideas::Caching]]` | The namespace changed |
 | `[[Caching]]` | The name now matches two notes |
 | `[[./Setup]]` inside the moved note | It now starts from the new folder |
@@ -399,7 +405,7 @@ A safety net for huge notes such as session transcripts. The average note in the
 | `The rest has no headings, so it cannot be read in parts.` | The note has no sections |
 
   Sections are named by their heading text as written, numbered when siblings share a name (§7.3). Only top-level sections are listed, so each name is also its path.
-- **No whole-note checksum on a cut read:** the header line carries no checksum, and the closing line lists each shown section's checksum instead. An agent can never overwrite the whole note from a partial copy and silently delete the sections it did not see.
+- **Whole-note checksum on a cut read too:** the header line carries the note's checksum as on a whole read, and the closing line lists each shown section's checksum for `replace_section`. `move_note` and `delete_note` keep the whole file, so a partial copy is enough to guard them. `write_note` never overwrites a note over the read limit (§11), so an agent can never replace the whole note from a partial copy and silently delete the sections it did not see.
 
 ### 7.3 One Section
 
@@ -525,12 +531,12 @@ broken links: 3 links in 2 notes
 ```
 
 - **Broken means changed, as in §6.1:** a link that now reaches no note is listed as it is; a name that now matches several notes ends with `  (ambiguous)`; a link that now resolves to another note ends with `  (now <id>)`. A redirected link is listed because it still resolves, so `recognitor ghosts` never shows it.
-- **One line per link:** the linking note's id (with its title when it differs, as in §4.2), the predicate, and the target as written, the text a `find_replace` fix needs. The count line is worded as in `relink` (§6.1). With nothing broken it reads `broken links: none`.
+- **One line per link:** the linking note's id (with its title when it differs, as in §4.2), the predicate, and the target as written, the text a `find_replace` fix needs. The count line is worded as in `relink` (§6.1). With nothing broken it reads `broken links: none`. Lines are sorted by linking note id ignoring case, then by line, predicate and target as written.
 - **No cap:** every line is a decision for the user, and a cut would hide exactly those lines. Deleting a heavily linked hub gives a long result.
 - **Bootstrap notice:** last, as `notice: <id> no longer loads as instructions at session start` (§1.1).
 - **Guard:** the whole-note checksum (§5.2). `expected_checksum` is required: a missing or empty one gives `delete_note needs expected_checksum` (§2.1).
-- **A note over the read limit is refused:** a cut read shows no whole-note checksum (§7.2), so the agent cannot hold a valid one, and a stale-checksum rejection would return the cut note again in a loop. The refusal comes before the guard and sends the agent to the user instead. `move_note` meets the same limit and settles it in its own slice.
-- **Order of checks:** archive (§1.1), read limit, checksum. Refusal texts: §5.3.
+- **Long notes:** deleted like any other. A cut read shows the whole-note checksum (§7.2), and the trash keeps the whole file.
+- **Order of checks:** archive (§1.1), checksum. Refusal texts: §5.3.
 - **Stores:** §1.1.
 - **Rejected: the OS trash.** Windows skips the Recycle Bin on network drives, macOS asks permission to control Finder, and the Linux trash can fail on servers and other mounts.
 
@@ -538,13 +544,13 @@ broken links: 3 links in 2 notes
 
 ## 11. `write_note(path, content, expected_checksum?)` and `move_note(note, new_path, expected_checksum)`
 
-Both are built from the rules above; no new decisions.
+Both are built from the rules above.
 
 | | `write_note` | `move_note` |
 | :--- | :--- | :--- |
 | **Input** | `path` from the vault root (`.md` optional), `content` (the whole file, frontmatter included), optional `expected_checksum` | `note`, `new_path`, `expected_checksum` |
 | **Without checksum** | Create only; rejected if the note exists (§5.2) | Not allowed |
-| **Refused when** | The key already exists (§6), the path has no top-level folder, the path has a non-ASCII character, or the path is not portable (§6) | The target's key already exists, unless it is the note's own key: a case-only rename is allowed and breaks no links (§6). Also when `new_path` has no top-level folder or a non-ASCII character |
+| **Refused when** | The key already exists (§6), the path has no top-level folder, the path has a non-ASCII character, or the path is not portable (§6). An overwrite is also refused when the note on disk is over the read limit (§7.2) | The target's key already exists, unless it is the note's own key: a case-only rename is allowed and breaks no links (§6). Also when `new_path` has no top-level folder or a non-ASCII character, or is not portable (§6), and when the note is in the archive (§1.1) |
 | **Output** | `<id>  checksum: <12 hex>` | The new id, and every link the move broke, with the `relink` call for links into the note; links inside it are fixed with `edit_note` (§6.1) |
 | **Folders** | Created as needed; existing folders keep their spelling (§6) | Created as needed; existing folders keep their spelling (§6) |
 
@@ -553,6 +559,31 @@ Both are built from the rules above; no new decisions.
 - **Empty `content` is refused:** content that is empty or only whitespace gets `write_note needs content` (§2.1). An empty overwrite would remove a note without the trash; that is `delete_note`'s job (§10).
 - **`expected_checksum: ""` counts as absent:** models often send an empty string for an optional argument, and a create never overwrites, so this is safe. Any other value is the 12-character form (§7.1), matched ignoring case.
 - **No title in the result:** the output shows the id alone, unlike §4.2, because the agent just wrote the title.
+- **Long notes:** `write_note` never overwrites a note over the read limit (§7.2). The agent has seen only part of it, and a whole-note write would delete the rest. `edit_note` changes it a section at a time. Creates, `move_note` and `delete_note` are unaffected. Order of checks for an overwrite: not found (§6.3), archive (§1.1), read limit, checksum.
+
+**`move_note` output:** the move line, the broken links, the `relink` call, and the bootstrap notice.
+
+```
+moved: ideas/Caching -> design/b/Caching
+broken links: 3 links in 2 notes
+- design/b/Caching: links_to ./Setup
+- ops/Runbook, titled "Runbook v2": links_to ideas::Caching
+- ops/Runbook, titled "Runbook v2": relates_to ../ideas/Caching
+relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
+```
+
+- **Broken links:** the block is `delete_note`'s (§10): one line per link, the `(ambiguous)` and `(now <id>)` markers, `broken links: none` when nothing broke, no cap, and the same order.
+- **The moved note's own links** are listed under its new id. They are fixed with `edit_note` (§6.1), so they never go in the `relink` call.
+- **The `relink` call:** one line, ids without titles. `notes` holds every listed note whose link pointed to the moved note; the user picks from it (§6.1). The line is left out when no such note is listed. A link that went to another note and now reaches the moved note is listed with `(now <new id>)`, but it is not in the call: `relink` skips a link that already resolves to `new`.
+- **Not listed:** a link that reached no note before and reaches the moved note now. The move fixed it, as a create does.
+- **Bootstrap notice:** last. A move into or inside the bootstrap gives `notice: <new id> loads as instructions at session start`; a move out gives `notice: <old id> no longer loads as instructions at session start` (§1.1).
+- **Into the archive:** allowed as a create (§1.1). The note's own links leave the graph, because archive notes have no edges. They are not listed, because their text did not change.
+- **Same path:** a normal result, not an error: `The note is already at <id>, so nothing was moved.` A new spelling of the same key is a case-only rename, the extension included (`Note.MD` to `Note.md`).
+- **`new_path`:** from the vault root, `.md` optional in any case.
+- **Case-only rename:** the file system may ignore case, so the file passes through a hidden temporary name next to it, `.<name>.recognitor-move`. A crash between the two steps leaves the note under that name; nothing is lost, and renaming it back restores it.
+- **Order of checks:** the note (§6.3), archive (§1.1), the path (§6), the target on disk (twins, an existing key, the same path), checksum.
+- **Argument messages:** `move_note needs a note`, `move_note needs new_path`, `move_note needs expected_checksum`. An empty string counts as not given, as in §9.
+- **Refusal texts:** §5.3.
 - **Path refusals:** `The path has no top-level folder. Write it from the vault root, as folder/name.` and `The path has a non-ASCII character. Note and folder names are ASCII only.`, plus the portable-path text (§6). Other refusals: §5.3.
 
 ---
