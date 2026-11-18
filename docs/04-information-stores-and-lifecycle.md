@@ -91,7 +91,7 @@ The bootstrap is loaded as a tree, starting from `index.md` and following links 
   ```
 
 - **`## Relations` stripped:** from its heading to the next level-1 or level-2 heading, or to the end of the file, the same section the parser reads relations from.
-- **No entry point:** `load_bootstrap` reads only the index. When the index has no `bootstrap/index.md` (no `bootstrap/` folder, no `index.md`, or a case twin), the tool returns one error line instead of the payload: ``error: bootstrap/index.md not found. Run `recognitor lint`.`` `recognitor bootstrap` prints the same line on stderr, with nothing on stdout, and exits with a non-zero code. A vault without a bootstrap is valid: the user decides whether the session-start hook calls it. `lint` names the cause ([02-open-questions-and-tradeoffs.md §8](02-open-questions-and-tradeoffs.md)).
+- **No entry point:** `load_bootstrap` reads only the index. When the index has no `bootstrap/index.md` (no `bootstrap/` folder, no `index.md`, or a case twin), the tool returns an error instead of the payload ([07-interface-contracts.md §2.1](07-interface-contracts.md#21-what-agents-see)): ``bootstrap/index.md not found. Run `recognitor lint`.`` `recognitor bootstrap` prints it on stderr after the `error:` prefix, with nothing on stdout, and exits with a non-zero code. A vault without a bootstrap is valid: the user decides whether the session-start hook calls it. `lint` names the cause ([02-open-questions-and-tradeoffs.md §8](02-open-questions-and-tradeoffs.md)).
 - **Ghost links in the tree:** the payload ends with one line listing them: `not loaded: behavior/personas/Mentor (not written yet)`. Several ghosts share the line, in load order, each once, as their links wrote them: `not loaded: Mentor (not written yet), Tone (ambiguous)`. A link that matches more than one note says `(ambiguous)`. Without ghosts, the line is left out.
 
 ### 2.3 Writes
@@ -109,7 +109,7 @@ Every top-level folder other than `bootstrap/` and `archive/` is a knowledge nam
 
 ### 3.1 Entry: `load_namespace(ns)`
 
-- Returns the body of `<ns>/index.md`, the namespace's entry point, plus one tool-generated line telling the agent to pass `ns` to `search`.
+- Returns `<ns>/index.md`, the namespace's entry point, without its frontmatter ([07-interface-contracts.md §3](07-interface-contracts.md#3-load_namespacens)), plus one tool-generated line telling the agent to pass `ns` to `search`.
 - Keeps no state. The agent passes `ns` to later searches, which rank the namespace's notes higher without filtering out the rest ([07-interface-contracts.md §3-4](07-interface-contracts.md#3-load_namespacens)).
 - A namespace without `index.md` returns its note list instead, and lint reports it.
 - `bootstrap` cannot be loaded this way; `load_bootstrap()` loads it. `archive` can be loaded explicitly ([07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access)).

@@ -9,10 +9,12 @@ This document defines every MCP tool and CLI command: its inputs, its output, it
 ## 1. Principles
 
 - **Stateless server:** the MCP server and the CLI keep no session state. Each call carries everything it needs. Parallel agents working from different namespaces share the database, never server state.
+- **Transport:** `recognitor mcp` serves MCP over stdio. The client starts one server per session as a child process; there is no HTTP server and no daemon.
 - **Namespace = entry point and perspective:** a namespace is where an agent enters the knowledge base and the angle it reads it from. It is not a boundary. Searches and graph walks span every knowledge namespace, and bootstrap and archive follow §1.1. The LLM decides when to follow links into other namespaces.
 - **No isolation in early versions:** the per-session allowlist and sealed namespaces from DR1-07 are dropped. They can return later if real use shows a need.
 - **MCP for every-session work, CLI for maintenance:** every MCP tool's schema costs context tokens in every session, so tools agents rarely need are CLI-only.
 - **Plain text output:** tools return Markdown text. There is no JSON output mode.
+- **Tokens are a cost, not a limit:** shorter text wins only while agents still use the tools correctly. When the benchmark or real use shows an agent misusing a tool because the text left something out, the text grows. A token count is a measurement, not a budget to meet. Where output is cut (search pages, long notes), the cut says how to get the rest.
 
 ### 1.1 Store Access
 
@@ -45,6 +47,46 @@ A note's store comes from its namespace: `bootstrap`, `archive`, or any other na
 - **Rejected: a `query` command for raw SQL.** The schema is a disposable projection that changes without migrations; exposing raw SQL would turn it into an API people depend on.
 - **Rejected: a `--json` flag.**
 
+### 2.1 What Agents See
+
+Agents read this text in every session. How the tools fit together is said once, in the server's `instructions` field, which MCP sends when a session connects. Each tool then gets one or two lines. The server instructions do not repeat the session-start steps: those live in the harness file or the hook ([04-information-stores-and-lifecycle.md §5.1](04-information-stores-and-lifecycle.md#51-session-start)), and each rule has one home (§5.2 there).
+
+**Server instructions:**
+
+```
+Notes are Markdown files; a note's id is its path without ".md". Use search to
+find notes, context to see what links to a note, and read_note for its text.
+Search and context show summaries only: read a note when you need its body.
+A line ending in "page N" means more results exist.
+```
+
+**Tools:**
+
+| Tool | Description | Arguments |
+| :--- | :--- | :--- |
+| `load_bootstrap` | Load the user's standing instructions: who they are, how to answer, rules for every project. Call once at session start, unless a hook already added them. | None |
+| `load_namespace` | Load a namespace's entry note. Call once when work enters a namespace, then pass the same `ns` to `search`. | `ns`: the namespace name |
+| `search` | Full-text search. Returns ids, summaries and matching facts, 10 per page. Every word must match, with no operators. `ns` ranks that namespace first without filtering; `ns: "archive"` also searches session records. | `query`: plain words. `ns`: from `load_namespace`. `page`: the number from the "page N" line |
+| `context` | Show a note's links out and in, each with its summary, without reading the neighbors. Use it to pick what to read next. | `note`: an id, path or name. `page`: the number from the "page N" line |
+| `read_note` | Return a note's full text with its checksum. `section` returns one section. A note over the token limit is cut to its best sections; the closing line says how to read the rest. | `note`: an id, path or name. `section`: heading text as written. `query`: words that choose which sections to keep when the note is cut |
+
+- **Word for word:** the server sends this text exactly as written here. The retrieval benchmark ([02-open-questions-and-tradeoffs.md §11](02-open-questions-and-tradeoffs.md#11-target-scale--benchmark-resolved)) can change it, through this section.
+- **Write tools** get their lines here when they are built, under the same rules.
+
+**Errors:** this document calls each outcome either an error or a normal result. On the wire:
+
+| Outcome | MCP | CLI |
+| :--- | :--- | :--- |
+| Error: `"x" not found`, `load_namespace("bootstrap")`, a query with no words, no such section | A tool result with `isError: true`; its text is the message | `error: <message>` on stderr, exit 1 |
+| Normal result: no hits, several matches (§6.3), a page past the end, no links | A tool result with the text | The text on stdout, exit 0 |
+| Bad arguments: `query` missing, `page` not a number, an argument the tool does not take | As an error | `error: <message>` and the usage text on stderr, exit 2 |
+| Unknown tool: a name not in `tools/list` | A JSON-RPC error (`-32602`), as the MCP spec prescribes. Clients offer only listed tools, so agents do not reach it | No CLI twin: an unknown command is a bad argument |
+
+- **Why a tool result:** each error message names the fix (call `load_bootstrap`, the list of sections), so it comes back as text the model reads and acts on. The flag tells the client the call failed, so a refusal never passes for a success.
+- **No prefix over MCP:** the text is the CLI's message without the `error:` prefix; the flag already says it.
+- **Argument messages:** they match the CLI's texts, without its dashes. A missing argument reads `<tool> needs <what>`: `search needs a query`, `read_note needs a note`, `load_namespace needs ns`. An argument of the wrong type reads `<argument> needs text`, or `page needs a number from 1`. New tools follow the same two patterns.
+- **Unknown arguments are errors:** `unexpected argument: <name>`, as the CLI says. Ignoring one would turn a typo such as `pages: 2` into page 1, a wrong result that looks right. The schemas do not mark extra arguments as forbidden: that would cost tokens in every session, and the error already teaches the agent.
+
 ---
 
 ## 3. `load_namespace(ns)`
@@ -52,12 +94,26 @@ A note's store comes from its namespace: `bootstrap`, `archive`, or any other na
 Loads a namespace's entry point into the agent's context once. Replaces `enter_namespace`, whose name implied server-side state.
 
 - **Input:** `ns`, the namespace name.
-- **Output:** the body of `<ns>/index.md`, found whatever its case (§6), followed by one line generated by the tool: `Pass ns: "<ns>" to search.`
+- **Output:** `<ns>/index.md`, found whatever its case (§6), as written with its frontmatter removed, then a blank line and one line generated by the tool: `Pass ns: "<ns>" to search.` When the content does not start with a level-1 heading line, `# <title>` is added above it, as in the bootstrap payload ([04-information-stores-and-lifecycle.md §2.2](04-information-stores-and-lifecycle.md#22-loading-load_bootstrap), step 5).
+- **Spelling in the line:** `<ns>` is the namespace as its folder is spelled on disk, whatever casing the agent passed, so it matches the ids in later results (`Compass/Index`).
+- **`## Relations` stays:** the bootstrap strips it because its walk loads the linked notes. `load_namespace` loads no other note, so the links are the agent's map of the namespace.
 - **Clean data:** the hint line comes from the tool and is never stored in `index.md`.
 - **State:** none. The LLM keeps the namespace in its context and passes it to later calls.
-- **`bootstrap` is refused:** the error says to call `load_bootstrap` (§1.1).
+- **`bootstrap` is refused:** the error says to call `load_bootstrap` (§1.1): `bootstrap is not loaded with load_namespace: call load_bootstrap for the standing instructions`.
+- **No such namespace:** when the index holds no note in `<ns>`, the tool returns an error that lists the namespaces that exist, so the agent can retry without another call (§5.3): `No namespace "nope". Namespaces: "archive", "baseline", "Compass".` Every namespace but `bootstrap` is listed, sorted by name ignoring case, each spelled as its folder is on disk. With nothing to list, the message ends after its first sentence.
+- **No nested namespaces:** a namespace is a top-level folder, so a name with a `/` (`backend/guides`) gets the same "No namespace" error. `read_note("backend/guides/index")` still reads that note.
 - **No `index.md`:** a namespace can exist without one, for example after `write_note` creates the first note in a new top-level folder. Storing is unaffected; only the entry point is missing, so only retrieval reports it:
-  - `load_namespace` returns the namespace's notes (ids and summaries) plus one line from the tool: `No index.md in "<ns>".`
+  - `load_namespace` returns a normal result, not an error: the line `No index.md in "<ns>". Its notes:` first, so the agent knows why a list follows, then at most 10 notes, the size of a search page (§4.2), sorted by id ignoring case. Each note is `- <id>`, with its title added as in §4.2, and its summary on the next line, indented two spaces, when it has one. When more notes exist, one closing line points to search, since the tool has no `page` argument: `12 more. Search with ns: "Shelf" to find them.` `<ns>` is spelled as the folder is on disk, as in the hint line.
+
+    ```
+    No index.md in "Shelf". Its notes:
+    - Shelf/Alpha
+      Summary of Alpha.
+    - Shelf/Beta
+      Summary of Beta.
+    12 more. Search with ns: "Shelf" to find them.
+    ```
+
   - `lint` reports every namespace without an `index.md`, and warns when an entry point is not spelled `index.md`.
   - `write_note` stays silent: nothing is wrong at write time.
 - **Query:** [05-database-schema-specification.md §3.2](05-database-schema-specification.md#32-namespace-entry-load_namespacens).

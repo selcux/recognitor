@@ -245,6 +245,8 @@ FROM notes
 WHERE key = ?1 || '/index';                     -- ?1 is the namespace key; matches index.md in any case
 ```
 
+A name with a `/` is never a namespace, so the tool answers it with the "No namespace" error before this query runs ([07-interface-contracts.md §3](07-interface-contracts.md#3-load_namespacens)). Otherwise `backend/guides` would match the nested `backend/guides/index`.
+
 ### 3.3 Two-Stage Graph Discovery
 Returns outgoing edges without loading full note content. Links into the bootstrap are not returned:
 
