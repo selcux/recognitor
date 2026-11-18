@@ -78,10 +78,6 @@ impl Index {
             Ok(t) => t,
             Err(refusal) => return Ok(WriteNote::Refused(refusal)),
         };
-        // Doc 07 §1.1: the archive takes creates only. Nothing on disk changes this, so it is refused before the lock.
-        if expected_checksum.is_some() && target.namespace_key() == ARCHIVE_NAMESPACE {
-            return Ok(WriteNote::Refused(ARCHIVE_APPEND_ONLY.to_string()));
-        }
         self.sync_if_stale(SweepOptions::default())?;
         let root = self.vault_root().to_path_buf();
         let tx = self.write_transaction()?;
@@ -97,26 +93,25 @@ impl Index {
 const ARCHIVE_APPEND_ONLY: &str =
     "Archive notes are append only: write_note never overwrites one. To add to it, use edit_note with append.";
 
+/// The refusal for an overwrite of a note `read_note` would cut (doc 07 §5.3, §11): the agent has seen only part of
+/// it, and a whole-note write would delete the rest. It returns no note, because no version of it would let the agent
+/// retry the same call.
+const TOO_LONG: &str = "The note is too long to read whole, so write_note cannot replace it and nothing was written. \
+                        Change it with edit_note, a section at a time.";
+
 /// The path an agent gave, split and checked (doc 07 §6, §11).
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Target {
+pub(crate) struct Target {
     /// The folders as typed, top-level folder first. Never empty.
-    folders: Vec<String>,
+    pub(crate) folders: Vec<String>,
     /// The filename without `.md`, as typed.
-    stem: String,
-}
-
-impl Target {
-    /// The top-level folder in lowercase: the namespace key, whatever spelling the folder ends up with.
-    fn namespace_key(&self) -> String {
-        self.folders.first().map(|f| f.to_ascii_lowercase()).unwrap_or_default()
-    }
+    pub(crate) stem: String,
 }
 
 /// Splits `path` into folders and a filename and refuses what no note can have as its path (doc 07 §6, §11): no
 /// top-level folder, a non-ASCII character. The other refusals are not in the docs: they keep a path inside the vault
 /// and make it a name the indexer would read back (see the report on this slice). The `Err` is the refusal's text.
-fn parse_path(path: &str) -> std::result::Result<Target, String> {
+pub(crate) fn parse_path(path: &str) -> std::result::Result<Target, String> {
     if !path.is_ascii() {
         return Err("The path has a non-ASCII character. Note and folder names are ASCII only.".to_string());
     }
@@ -195,7 +190,7 @@ fn list(dir: &Path) -> Result<Vec<Entry>> {
 
 /// Where the target is on the disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Place {
+pub(crate) enum Place {
     /// Two folders on the target path share a key. Their paths end with `/`.
     TwinFolders(Vec<String>),
     /// The folder as it is spelled on disk, where existing folders keep their spelling and new ones are spelled as
@@ -206,7 +201,7 @@ enum Place {
 
 /// Doc 07 §5.1 step 2: reads each folder on the target path from the disk and compares every name in it by key. The
 /// index is never asked: a human may have saved a file inside the sweep window.
-fn locate(root: &Path, target: &Target) -> Result<Place> {
+pub(crate) fn locate(root: &Path, target: &Target) -> Result<Place> {
     let mut folder = String::new();
     let mut exists = true;
     for typed in &target.folders {
@@ -236,7 +231,7 @@ fn locate(root: &Path, target: &Target) -> Result<Place> {
     Ok(Place::At { folder, files })
 }
 
-fn join(folder: &str, name: &str) -> String {
+pub(crate) fn join(folder: &str, name: &str) -> String {
     if folder.is_empty() {
         name.to_string()
     } else {
@@ -246,18 +241,36 @@ fn join(folder: &str, name: &str) -> String {
 
 /// The refusal for names that differ only in case: every path, no content (doc 07 §5.3).
 fn twins_refusal(paths: &[String]) -> WriteNote {
-    let mut text =
-        String::from("Names that differ only in case cannot exist together, so nothing was written. On disk:\n");
+    WriteNote::Refused(twins_text(paths, "written"))
+}
+
+/// The text of [`twins_refusal`]. `done` is what did not happen: `written` for a create, `moved` for a move (doc 07
+/// §5.3 gives each its own text).
+pub(crate) fn twins_text(paths: &[String], done: &str) -> String {
+    let mut text = format!("Names that differ only in case cannot exist together, so nothing was {done}. On disk:\n");
     for p in paths {
         text.push_str(&format!("  {p}\n"));
     }
-    WriteNote::Refused(text)
+    text
 }
 
 /// A refusal that returns the note as it is now, with its checksum, cut at the read limit (doc 07 §5.3).
 fn current_refusal(root: &Path, rel: &str, reason: &str, max_tokens: usize) -> Result<WriteNote> {
     let abs = root.join(rel);
     let bytes = fs::read(&abs).map_err(|e| Error::io(&abs, e))?;
+    Ok(WriteNote::Refused(with_current(reason, rel, &bytes, max_tokens)))
+}
+
+/// The refusal of a create on an existing note (doc 07 §5.3): the note as it is now. A note over the read limit gets the
+/// text that says it cannot be replaced whole, because the checksum the first text asks for could never be used.
+fn exists_refusal(root: &Path, rel: &str, max_tokens: usize) -> Result<WriteNote> {
+    let abs = root.join(rel);
+    let bytes = fs::read(&abs).map_err(|e| Error::io(&abs, e))?;
+    let reason = if read::is_cut(rel, &bytes, max_tokens) {
+        EXISTS_TOO_LONG
+    } else {
+        EXISTS
+    };
     Ok(WriteNote::Refused(with_current(reason, rel, &bytes, max_tokens)))
 }
 
@@ -303,19 +316,31 @@ fn write_note(
                     Place::TwinFolders(paths) => Ok(twins_refusal(&paths)),
                     Place::At { files, .. } if files.len() > 1 => Ok(twins_refusal(&files)),
                     Place::At { files, .. } => match files.first() {
-                        Some(found) => current_refusal(root, found, EXISTS, max_tokens),
+                        Some(found) => exists_refusal(root, found, max_tokens),
                         None => Err(Error::io(abs, e)),
                     },
                 },
                 Err(e) => Err(Error::io(abs, e)),
             }
         }
-        (None, Some(found)) => current_refusal(root, &found, EXISTS, max_tokens),
+        (None, Some(found)) => exists_refusal(root, &found, max_tokens),
         // Doc 07 §6.3, "None": a note that is not there is "not found".
         (Some(_), None) => Err(Error::NoteNotFound(path.to_string())),
         (Some(expected), Some(found)) => {
+            // Doc 07 §11, order of checks for an overwrite: not found (above), archive, read limit, checksum.
+            let in_archive = found
+                .split('/')
+                .next()
+                .is_some_and(|ns| ns.eq_ignore_ascii_case(ARCHIVE_NAMESPACE));
+            if in_archive {
+                return Ok(WriteNote::Refused(ARCHIVE_APPEND_ONLY.to_string()));
+            }
             let abs = root.join(&found);
             let current = fs::read(&abs).map_err(|e| Error::io(&abs, e))?;
+            // The read code makes the decision, so the two cannot disagree.
+            if read::is_cut(&found, &current, max_tokens) {
+                return Ok(WriteNote::Refused(TOO_LONG.to_string()));
+            }
             if !expected.eq_ignore_ascii_case(&sha256_prefix(&current, CHECKSUM_LEN)) {
                 return current_refusal(root, &found, CHANGED, max_tokens);
             }
@@ -327,6 +352,8 @@ fn write_note(
 
 const EXISTS: &str = "The note already exists, so nothing was written. To replace it, call again with its checksum as \
                       expected_checksum.";
+const EXISTS_TOO_LONG: &str = "The note already exists and is too long to replace whole, so nothing was written. Change \
+                               it with edit_note.";
 const CHANGED: &str = "The note changed since that checksum, so nothing was written.";
 
 /// Step 5 of doc 07 §5.1: the note's index rows, then the result.
@@ -403,11 +430,6 @@ mod tests {
         ] {
             assert!(parse_path(p).unwrap_err().contains("not a note path"), "{p}");
         }
-    }
-
-    #[test]
-    fn the_namespace_key_is_the_lowercase_top_folder() {
-        assert_eq!(parse_path("Archive/x").unwrap().namespace_key(), "archive");
     }
 
     #[test]

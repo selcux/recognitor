@@ -32,8 +32,8 @@ pub struct NoteText {
     pub title: Option<String>,
     /// The section's path (`Storage > Write lock`) when one section was asked for.
     pub section: Option<String>,
-    /// The first 12 hex characters of the SHA-256 of the file (or of the section's bytes). `None` on a cut read
-    /// (doc 07 §7.2: no whole-note checksum on a cut read).
+    /// The first 12 hex characters of the SHA-256 of the file (or of the section's bytes). A cut note read carries the
+    /// whole-note checksum too (doc 07 §7.2); only a cut section read has none, since its bytes are not all shown.
     pub checksum: Option<String>,
     /// The text under the header line. A cut read ends with its closing line.
     pub text: String,
@@ -102,6 +102,13 @@ pub fn read(
         None => Ok(ctx.note(&bytes, &outline)),
         Some(wanted) => ctx.section(&outline, wanted),
     }
+}
+
+/// True when `read_note` without `section` would cut the note whose file holds `bytes`: it is over the read limit
+/// (doc 07 §7.2). The write tools ask this to decide what a long note allows (doc 07 §11), so they cannot disagree
+/// with the read.
+pub(crate) fn is_cut(rel: &str, bytes: &[u8], max_tokens: usize) -> bool {
+    matches!(read_file(rel, bytes, max_tokens), Read::Cut(_))
 }
 
 /// A note read from the bytes of its file, with no index lookup: what a rejected write returns as the current version
@@ -202,6 +209,7 @@ impl Ctx<'_> {
         }
         let container = Container {
             header: self.titled(),
+            checksum: Some(checksum.clone()),
             text: self.text,
             fixed: 0..outline.fm_end,
             head: outline.fm_end..outline.head_end,
@@ -213,7 +221,8 @@ impl Ctx<'_> {
                 .collect(),
             limit: self.limit,
         };
-        Read::Cut(self.result(None, None, container.cut(self.query)))
+        // Doc 07 §7.2: the header line carries the whole-note checksum on a cut read too.
+        Read::Cut(self.result(None, Some(checksum), container.cut(self.query)))
     }
 
     fn section(&self, outline: &Outline, wanted: &str) -> Result<Read> {
@@ -247,6 +256,7 @@ impl Ctx<'_> {
         }
         let container = Container {
             header,
+            checksum: None,
             text: self.text,
             fixed: section.start..section.start,
             head: section.start..section.head_end(),
@@ -384,8 +394,11 @@ struct Plan {
 /// What a cut works on (doc 07 §7.2): the always-kept `fixed` bytes, the `head` in blocks, and the `children` in file
 /// order.
 struct Container<'a> {
-    /// The header line without a checksum.
+    /// The header line without its checksum.
     header: String,
+    /// The checksum the header line carries: the whole note's on a cut note, none on a cut section (doc 07 §7.2,
+    /// §7.3). It counts toward the limit, as the whole output does.
+    checksum: Option<String>,
     text: &'a str,
     /// Kept whole: the frontmatter of a note, nothing for a section.
     fixed: std::ops::Range<usize>,
@@ -427,7 +440,7 @@ impl Container<'_> {
         let slice_chars: Vec<usize> = slices.iter().map(|r| self.text[r.clone()].chars().count()).collect();
         let order = self.rank(query);
         let fixed_chars = self.text[self.fixed.clone()].chars().count();
-        let header_chars = self.header.chars().count() + 1;
+        let header_chars = header_line(&self.header, self.checksum.as_deref()).chars().count();
 
         let size = |plan: &Plan| -> usize {
             let mut chars = header_chars + fixed_chars;

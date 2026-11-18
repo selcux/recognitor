@@ -346,11 +346,8 @@ fn cli_applies_the_configured_limit() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(
-        text.starts_with(
-            "a/Long
-"
-        ),
-        "no checksum on a cut read: {text}"
+        text.starts_with(&format!("a/Long  checksum: {}\n", sum(&long))),
+        "the whole-note checksum on a cut read: {text}"
     );
     assert!(text.trim_end().ends_with("cannot be read in parts.]"), "{text}");
     assert!(text.contains("[cut at 1000 tokens."), "{text}");
@@ -434,7 +431,8 @@ fn a_long_note_is_cut_with_the_closing_line_of_the_doc() {
     let (_v, index) = vault_with("recognitor/Decisions.md", &text);
     let out = text_of(&index, "recognitor/Decisions");
     let expected = format!(
-        "recognitor/Decisions\n{HEAD}{}{}{}",
+        "recognitor/Decisions  checksum: {}\n{HEAD}{}{}{}",
+        sum(&text),
         s[0],
         s[1],
         closing(4000, &[("Storage", &s[0]), ("Search", &s[1])], &["Index", "Notes"], "")
@@ -467,7 +465,8 @@ fn a_section_that_does_not_fit_is_skipped_and_a_later_one_is_taken() {
     let (_v, index) = vault_with("a/Decisions.md", &text);
     let out = read::render(&rd(&index, "a/Decisions", None, None, 1000).unwrap());
     let expected = format!(
-        "a/Decisions\n{HEAD}{}{}{}",
+        "a/Decisions  checksum: {}\n{HEAD}{}{}{}",
+        sum(&text),
         s[0],
         s[2],
         closing(1000, &[("A", &s[0]), ("C", &s[2])], &["B", "D"], "")
@@ -492,7 +491,8 @@ fn query_ranks_sections_and_they_show_in_file_order() {
     assert_eq!(
         out,
         format!(
-            "a/Decisions\n{HEAD}{}{}{}",
+            "a/Decisions  checksum: {}\n{HEAD}{}{}{}",
+            sum(&text),
             s[0],
             s[1],
             closing(1000, &[("P", &s[0]), ("Q", &s[1])], &["R", "S"], "")
@@ -503,7 +503,8 @@ fn query_ranks_sections_and_they_show_in_file_order() {
     assert_eq!(
         out,
         format!(
-            "a/Decisions\n{HEAD}{}{}",
+            "a/Decisions  checksum: {}\n{HEAD}{}{}",
+            sum(&text),
             s[1],
             closing(600, &[("Q", &s[1])], &["P", "R", "S"], "")
         )
@@ -513,7 +514,8 @@ fn query_ranks_sections_and_they_show_in_file_order() {
     assert_eq!(
         out,
         format!(
-            "a/Decisions\n{HEAD}{}{}",
+            "a/Decisions  checksum: {}\n{HEAD}{}{}",
+            sum(&text),
             s[0],
             closing(600, &[("P", &s[0])], &["Q", "R", "S"], "")
         )
@@ -585,7 +587,8 @@ fn a_head_over_the_limit_is_cut_block_by_block() {
     let (_v, index) = vault_with("a/T.md", &text);
     let out = read::render(&rd(&index, "a/T", None, None, 100).unwrap());
     let expected = format!(
-        "a/T\n---\ntype: hub\n---\n# T\n\nShort summary.\n\n{}",
+        "a/T  checksum: {}\n---\ntype: hub\n---\n# T\n\nShort summary.\n\n{}",
+        sum(&text),
         closing(100, &[], &["A", "B"], PART_OF_HEAD)
     );
     assert_eq!(out, expected);
@@ -603,7 +606,10 @@ fn a_note_without_headings_says_it_cannot_be_read_in_parts() {
     let out = read::render(&rd(&index, "a/N", None, None, 100).unwrap());
     assert_eq!(
         out,
-        "a/N\n# N\n\nFirst para short.\n\n[cut at 100 tokens. The rest has no headings, so it cannot be read in parts.]\n"
+        format!(
+            "a/N  checksum: {}\n# N\n\nFirst para short.\n\n[cut at 100 tokens. The rest has no headings, so it cannot be read in parts.]\n",
+            sum(&text)
+        )
     );
 }
 
@@ -617,22 +623,57 @@ fn the_frontmatter_stays_whole_when_it_is_over_the_limit() {
     let text = format!("{fm}# N\n\nSum.\n\n{}", sec("A", "", 300));
     let (_v, index) = vault_with("a/N.md", &text);
     let out = read::render(&rd(&index, "a/N", None, None, 100).unwrap());
-    assert!(out.starts_with(&format!("a/N\n{fm}")), "{out}");
+    assert!(
+        out.starts_with(&format!("a/N  checksum: {}\n{fm}", sum(&text))),
+        "{out}"
+    );
     assert!(!out.contains("# N"), "{out}");
     assert!(out.contains("[cut at 100 tokens."), "{out}");
 }
 
-/// §7.2: no whole-note checksum on a cut read; the header carries the id, and the title when it differs.
+/// §7.2: a cut read carries the whole-note checksum in its header line, as a whole read does, and the title when it
+/// differs. The closing line still lists the shown sections' checksums.
 #[test]
-fn a_cut_read_has_no_checksum_in_its_header() {
+fn a_cut_read_carries_the_whole_note_checksum_in_its_header() {
     let text = format!("# Tools & sourcing\n\nSum.\n\n{}", sec("A", "", 3000));
     let (_v, index) = vault_with("a/Tools.md", &text);
-    let out = read::render(&rd(&index, "a/Tools", None, None, 100).unwrap());
+    let read = rd(&index, "a/Tools", None, None, 100).unwrap();
+    assert!(matches!(read, Read::Cut(_)));
+    let out = read::render(&read);
     assert!(
-        out.starts_with("a/Tools, titled \"Tools & sourcing\"\n# Tools"),
+        out.starts_with(&format!(
+            "a/Tools, titled \"Tools & sourcing\"  checksum: {}\n# Tools",
+            sum(&text)
+        )),
         "{out}"
     );
-    assert!(!out.lines().next().unwrap().contains("checksum"));
+    // The whole file's checksum, not a section's.
+    assert_eq!(
+        out.lines().next().unwrap().rsplit_once("checksum: ").unwrap().1,
+        sha256_prefix(text.as_bytes(), 12)
+    );
+}
+
+/// §7.2: the header line counts toward the limit on a cut read, checksum included, as on a whole read.
+#[test]
+fn the_header_checksum_counts_toward_the_limit_of_a_cut_read() {
+    // Whole output just under the limit with its checksum header, just over without room for the checksum.
+    let text = format!("# N\n\nSum.\n\n{}", sec("A", "", 3000));
+    let (_v, index) = vault_with("a/N.md", &text);
+    for limit in [100, 150, 400] {
+        let out = read::render(&rd(&index, "a/N", None, None, limit).unwrap());
+        assert!(tok(&out) <= limit, "{limit}: {} tokens", tok(&out));
+    }
+}
+
+/// §7.3: a cut section read carries no checksum: its bytes are not all shown.
+#[test]
+fn a_cut_section_read_has_no_checksum_in_its_header() {
+    let text = format!("# N\n\nSum.\n\n## A\n\nLead.\n### B\n\n{}", filler(3000));
+    let (_v, index) = vault_with("a/N.md", &text);
+    let out = read::render(&rd(&index, "a/N", Some("A"), None, 100).unwrap());
+    assert!(out.starts_with("a/N > A\n## A"), "{out}");
+    assert!(out.contains("[cut at 100 tokens."), "{out}");
 }
 
 /// §7.2: a heading-shaped line in code is text, not a section.
@@ -875,7 +916,8 @@ fn cli_passes_the_query_to_the_cut() {
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         format!(
-            "a/Decisions\n{HEAD}{}{}",
+            "a/Decisions  checksum: {}\n{HEAD}{}{}",
+            sum(&text),
             s[1],
             closing(600, &[("Q", &s[1])], &["P", "R"], "")
         )
@@ -1001,7 +1043,8 @@ fn the_closing_line_shows_numbered_names() {
     assert_eq!(
         out,
         format!(
-            "a/Decisions\n{HEAD}{}{}{}",
+            "a/Decisions  checksum: {}\n{HEAD}{}{}{}",
+            sum(&text),
             s[0],
             s[1],
             closing(

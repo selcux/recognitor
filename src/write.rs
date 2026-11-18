@@ -63,6 +63,66 @@ pub(crate) fn create_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     linked
 }
 
+/// Removes `path`, and tries again a few times when Windows answers "access denied" (see [`rename_with_retries`]).
+fn remove_with_retries(path: &Path) -> io::Result<()> {
+    let mut tries = 1;
+    loop {
+        match fs::remove_file(path) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied && tries < RENAME_TRIES => {
+                tries += 1;
+                thread::sleep(RENAME_WAIT);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// The temporary name a case-only rename passes through, next to the note. Hidden and not `.md`, like the temporary
+/// file of [`replace_file`].
+fn move_temp_path(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    path.with_file_name(format!(".{name}.recognitor-move"))
+}
+
+/// Moves the file `from` to `to` and fails with [`io::ErrorKind::AlreadyExists`] when something is at `to` (doc 07
+/// §5.1 step 4: a move uses a rename that cannot replace, so a file a human saves after the existence check is never
+/// overwritten).
+///
+/// `std::fs::rename` replaces its target on every platform, so the file is linked into its new place first (a hard
+/// link fails when the target exists) and the old name is removed after. When the removal fails, the new link is
+/// taken away again, so the move leaves one name or the other, never both.
+///
+/// `case_only` is a rename whose new name has the key of the old one (`caching.md` to `Caching.md`). On a file system
+/// that ignores case, `to` is `from` itself, so the link would fail. The file goes through a temporary name instead:
+/// renamed away from `from`, linked to `to`, and the temporary name removed. A failed link puts it back. The temporary
+/// name never exists for longer than three file system calls; a crash between them leaves the note under its hidden
+/// temporary name, which the sweep does not index (the first step of a repair is to rename it back).
+pub(crate) fn move_file(from: &Path, to: &Path, case_only: bool) -> io::Result<()> {
+    if case_only {
+        let tmp = move_temp_path(from);
+        if tmp.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("{} is in the way", tmp.display()),
+            ));
+        }
+        rename_with_retries(from, &tmp)?;
+        if let Err(e) = fs::hard_link(&tmp, to) {
+            let _ = rename_with_retries(&tmp, from);
+            return Err(e);
+        }
+        return remove_with_retries(&tmp);
+    }
+    fs::hard_link(from, to)?;
+    remove_with_retries(from).inspect_err(|_| {
+        let _ = fs::remove_file(to);
+    })
+}
+
 /// The vault's trash, from the vault root (doc 07 §10). `.recognitor/` is a hidden folder, so the sweep never indexes
 /// what is in it.
 const TRASH_DIR: &str = ".recognitor/trash";
@@ -184,6 +244,36 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, ["New.md"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn move_file_moves_and_never_replaces() {
+        let dir = scratch("move");
+        fs::write(dir.join("A.md"), b"mine").unwrap();
+        fs::write(dir.join("B.md"), b"a human wrote this").unwrap();
+        let err = move_file(&dir.join("A.md"), &dir.join("B.md"), false).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(dir.join("A.md")).unwrap(), b"mine");
+        assert_eq!(fs::read(dir.join("B.md")).unwrap(), b"a human wrote this");
+        fs::remove_file(dir.join("B.md")).unwrap();
+        move_file(&dir.join("A.md"), &dir.join("B.md"), false).unwrap();
+        assert!(!dir.join("A.md").exists());
+        assert_eq!(fs::read(dir.join("B.md")).unwrap(), b"mine");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_case_only_move_changes_the_spelling_and_leaves_nothing_behind() {
+        let dir = scratch("case-move");
+        fs::write(dir.join("caching.md"), b"mine").unwrap();
+        move_file(&dir.join("caching.md"), &dir.join("Caching.md"), true).unwrap();
+        let names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["Caching.md"]);
+        assert_eq!(fs::read(dir.join("Caching.md")).unwrap(), b"mine");
         let _ = fs::remove_dir_all(&dir);
     }
 

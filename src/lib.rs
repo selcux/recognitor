@@ -13,6 +13,7 @@ pub mod error;
 pub mod hash;
 pub mod index;
 pub mod mcp;
+pub mod move_note;
 pub mod namespace;
 pub mod outline;
 pub mod parse;

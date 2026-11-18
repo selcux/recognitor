@@ -16,6 +16,15 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 const LIMIT: usize = 4000;
 
+/// A note over the default read limit (about 4,400 tokens, estimated), made of sections.
+fn long_note() -> String {
+    let mut long = String::from("# Long\n\nSummary.\n");
+    for n in 1..=40 {
+        long.push_str(&format!("\n## Part {n}\n{}\n", "word ".repeat(100)));
+    }
+    long
+}
+
 struct TestVault {
     root: PathBuf,
     db: PathBuf,
@@ -203,8 +212,17 @@ fn a_refusal_returns_the_note_cut_at_the_read_limit() {
     let WriteNote::Refused(text) = refused else {
         panic!("a create on an existing note must be refused");
     };
-    // The cut is the read's: no whole-note checksum, a closing line (doc 07 §7.2).
-    assert!(text.contains("\na/Long\n# Long\n"), "{text}");
+    // A note over the read limit gets the variant text (doc 07 §5.3): the checksum the plain text asks for could never
+    // be used. The note follows as the read cuts it, with the whole-note checksum in its header line and a closing line
+    // (§7.2).
+    assert!(
+        text.starts_with(&format!(
+            "The note already exists and is too long to replace whole, so nothing was written. Change it with \
+             edit_note. Current version:\na/Long  checksum: {}\n# Long\n",
+            sum(&long)
+        )),
+        "{text}"
+    );
     assert!(text.contains("[cut at 300 tokens."), "{text}");
     assert!(
         estimate_tokens(text.chars().count()) < 400,
@@ -531,4 +549,90 @@ fn content_is_written_as_given_without_changes() {
     let content = "no heading, CRLF\r\nline two\r\n\n\ttabbed \u{e9}\u{4e2d}\n";
     v.write("baseline/Raw", content, None);
     assert_eq!(fs::read(v.root.join("baseline/Raw.md")).unwrap(), content.as_bytes());
+}
+
+// Long notes (doc 07 §11, §5.3): an overwrite of a note over the read limit is refused, whatever the checksum.
+
+const OVERWRITE_TOO_LONG: &str = "The note is too long to read whole, so write_note cannot replace it and nothing was written. Change it with edit_note, a section at a time.";
+
+#[test]
+fn an_overwrite_of_a_note_over_the_read_limit_is_refused_before_the_checksum_and_returns_no_note() {
+    let long = long_note();
+    let v = TestVault::new(&[("a/Long.md", &long)]);
+    // The right checksum, from a cut read (doc 07 §7.2), and a wrong one get the same refusal, and nothing is returned.
+    let shown = {
+        let mut index = v.index();
+        let cut = render_read(&index.read("a/Long", None, None, LIMIT).unwrap());
+        assert!(cut.contains("[cut at 4000 tokens."), "the note should be cut");
+        cut.lines()
+            .next()
+            .unwrap()
+            .rsplit_once("checksum: ")
+            .unwrap()
+            .1
+            .to_string()
+    };
+    assert_eq!(shown, sum(&long));
+    for checksum in [shown.as_str(), "000000000000"] {
+        assert_eq!(v.write("a/Long", "# New\n", Some(checksum)), OVERWRITE_TOO_LONG);
+    }
+    assert_eq!(v.file("a/Long.md"), long);
+}
+
+#[test]
+fn the_read_limit_for_an_overwrite_is_the_one_read_note_cuts_at() {
+    // About 200 tokens (estimate): whole at the default limit, cut at 50.
+    let text = format!("# Mid\n\n## Part\n\n{}\n", "word ".repeat(160));
+    let v = TestVault::new(&[("a/Mid.md", &text)]);
+    let tight = v.index().write_note("a/Mid", "# New\n", Some(&sum(&text)), 50).unwrap();
+    assert_eq!(tight, WriteNote::Refused(OVERWRITE_TOO_LONG.to_string()));
+    assert_eq!(v.file("a/Mid.md"), text);
+    let ok = v.write("a/Mid", "# New\n", Some(&sum(&text)));
+    assert!(ok.starts_with("a/Mid  checksum: "), "{ok}");
+}
+
+/// Order of checks for an overwrite: not found, archive, read limit, checksum (doc 07 §11).
+#[test]
+fn an_overwrite_checks_not_found_then_the_archive_then_the_read_limit_then_the_checksum() {
+    let long = long_note();
+    let v = TestVault::new(&[
+        ("archive/Record.md", &long),
+        ("a/Long.md", &long),
+        ("a/Short.md", "# Short\n\nText.\n"),
+    ]);
+    // Not found comes first, even for a path in the archive.
+    let mut index = v.index();
+    assert!(matches!(
+        index.write_note("archive/Nothing", "# N\n", Some("000000000000"), LIMIT),
+        Err(Error::NoteNotFound(p)) if p == "archive/Nothing"
+    ));
+    // The archive comes before the read limit: a long archive note gets the archive text.
+    assert_eq!(
+        v.write("archive/Record", "# N\n", Some(&sum(&long))),
+        "Archive notes are append only: write_note never overwrites one. To add to it, use edit_note with append."
+    );
+    // The read limit comes before the checksum (above), and the checksum guards a short note.
+    let stale = v.write("a/Short", "# N\n", Some("000000000000"));
+    assert!(
+        stale.starts_with("The note changed since that checksum, so nothing was written. Current version:"),
+        "{stale}"
+    );
+}
+
+/// A create on a path where a long note exists carries the note cut, with its checksum, after the variant text.
+#[test]
+fn a_create_on_a_long_note_names_edit_note_and_shows_the_cut_with_its_checksum() {
+    let long = long_note();
+    let v = TestVault::new(&[("a/Long.md", &long)]);
+    let text = v.write("a/Long", "# New\n", None);
+    assert!(
+        text.starts_with(&format!(
+            "The note already exists and is too long to replace whole, so nothing was written. Change it with edit_note. Current version:\na/Long  checksum: {}\n",
+            sum(&long)
+        )),
+        "{}",
+        &text[..220]
+    );
+    assert!(text.trim_end().ends_with(']'));
+    assert_eq!(v.file("a/Long.md"), long);
 }

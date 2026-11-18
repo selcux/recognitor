@@ -334,6 +334,7 @@ fn tools_list_has_the_read_tools_and_the_write_tools() {
             "read_note",
             "write_note",
             "edit_note",
+            "move_note",
             "relink",
             "delete_note"
         ]
@@ -1512,4 +1513,220 @@ fn delete_note_refuses_the_archive_and_asks_which_of_several_and_carries_the_boo
         ),
         "{text}"
     );
+}
+
+// `move_note` (doc 07 §6.1, §11): MCP only in this slice; the CLI `move` is a later slice.
+
+#[test]
+fn move_note_checks_its_arguments_over_mcp() {
+    let v = vault();
+    let mut server = v.server();
+    let list = server.list_tools();
+    let schema = list["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "move_note")
+        .unwrap()["inputSchema"]
+        .clone();
+    assert_eq!(schema["required"], json!(["note", "new_path", "expected_checksum"]));
+    assert_eq!(server.err("move_note", json!({})), "move_note needs a note");
+    assert_eq!(
+        server.err("move_note", json!({"note": "backend/Release"})),
+        "move_note needs new_path"
+    );
+    assert_eq!(
+        server.err(
+            "move_note",
+            json!({"note": "backend/Release", "new_path": "ops/Release"})
+        ),
+        "move_note needs expected_checksum"
+    );
+    // An empty string counts as not given (doc 07 §2.1), for the path as for the checksum.
+    assert_eq!(
+        server.err(
+            "move_note",
+            json!({"note": "backend/Release", "new_path": "", "expected_checksum": "abc"})
+        ),
+        "move_note needs new_path"
+    );
+    assert_eq!(
+        server.err(
+            "move_note",
+            json!({"note": "backend/Release", "new_path": "ops/Release", "expected_checksum": ""})
+        ),
+        "move_note needs expected_checksum"
+    );
+    assert_eq!(
+        server.err(
+            "move_note",
+            json!({"note": "backend/Release", "new_path": 5, "expected_checksum": "abc"})
+        ),
+        "new_path needs text"
+    );
+    assert_eq!(
+        server.err(
+            "move_note",
+            json!({"note": "backend/Release", "new_path": "ops/Release", "expected_checksum": "abc", "section": "x"})
+        ),
+        "unexpected argument: section"
+    );
+    // Nothing above moved anything.
+    assert!(v.root.join("backend/Release.md").exists());
+    assert!(!v.root.join("ops/Release.md").exists());
+}
+
+#[test]
+fn move_note_moves_a_note_and_lists_the_broken_links_over_mcp() {
+    let v = vault();
+    let mut server = v.server();
+    let checksum = checksum_of(&server.ok("read_note", json!({"note": "backend/Release"})));
+    // A stale checksum is an error that returns the current note, and nothing moves.
+    let stale = server.err(
+        "move_note",
+        json!({"note": "backend/Release", "new_path": "ops/Release", "expected_checksum": "000000000000"}),
+    );
+    assert_eq!(
+        stale,
+        format!(
+            "The note changed since that checksum, so nothing was moved. Current version:\n\
+             backend/Release  checksum: {checksum}\n{RELEASE}"
+        )
+    );
+    assert!(v.root.join("backend/Release.md").exists());
+    // The right one moves it. `meta/index` links `backend::Release`, which names the old namespace; `backend/Auth Flow`
+    // links `Release` by name, which still reaches it (step 4).
+    let text = server.ok(
+        "move_note",
+        json!({"note": "backend::Release", "new_path": "Ops/archive-me/Release.md", "expected_checksum": checksum.to_uppercase()}),
+    );
+    assert_eq!(
+        text,
+        "moved: backend/Release -> ops/archive-me/Release\n\
+         broken links: 2 links in 2 notes\n\
+         - meta/index, titled \"Meta hub\": indexes backend::Release\n\
+         - ops/archive-me/Release: part_of index  (now ops/index)\n\
+         relink(old: \"backend/Release\", new: \"ops/archive-me/Release\", notes: [\"meta/index\"])\n"
+    );
+    assert!(!v.root.join("backend/Release.md").exists());
+    assert_eq!(
+        fs::read_to_string(v.root.join("ops/archive-me/Release.md")).unwrap(),
+        RELEASE
+    );
+    // The old id is gone for every tool and the new one reads.
+    assert_eq!(
+        server.err("read_note", json!({"note": "backend/Release"})),
+        "\"backend/Release\" not found"
+    );
+    assert!(
+        server
+            .ok("read_note", json!({"note": "ops/archive-me/Release"}))
+            .starts_with("ops/archive-me/Release  checksum: ")
+    );
+    // The printed call works as written, over the same server.
+    let relinked = server.ok(
+        "relink",
+        json!({"old": "backend/Release", "new": "ops/archive-me/Release", "notes": ["meta/index"]}),
+    );
+    assert_eq!(relinked, "relinked: 1 link in 1 note\n");
+    assert!(
+        fs::read_to_string(v.root.join("meta/index.md"))
+            .unwrap()
+            .contains("indexes [[ops::Release]]")
+    );
+}
+
+#[test]
+fn move_note_refuses_the_archive_a_taken_path_and_asks_which_of_several() {
+    let v = vault();
+    let mut server = v.server();
+    // Out of the archive.
+    let record = server.ok("read_note", json!({"note": "archive/2026-11-01 session"}));
+    assert_eq!(
+        server.err(
+            "move_note",
+            json!({"note": "archive/2026-11-01 session", "new_path": "ops/Session", "expected_checksum": checksum_of(&record)})
+        ),
+        "Archive notes are append only: move_note never moves one. Only the user can move the file."
+    );
+    assert!(v.root.join("archive/2026-11-01 session.md").exists());
+    // Onto another note: that note comes back.
+    let release = server.ok("read_note", json!({"note": "backend/Release"}));
+    let taken = server.err(
+        "move_note",
+        json!({"note": "backend/Release", "new_path": "ops/Caching", "expected_checksum": checksum_of(&release)}),
+    );
+    assert!(
+        taken.starts_with(
+            "A note already exists at that path, so nothing was moved. Current version:\nops/Caching  checksum: "
+        ),
+        "{taken}"
+    );
+    // Several matches are a normal result, and nothing moves.
+    assert_eq!(
+        server.ok(
+            "move_note",
+            json!({"note": "Caching", "new_path": "ops/Other", "expected_checksum": "000000000000"})
+        ),
+        "\"Caching\" matches 2 notes. Call again with one id:\n  ops/Caching\n  research/Caching\n"
+    );
+    assert!(v.root.join("ops/Caching.md").exists() && v.root.join("research/Caching.md").exists());
+}
+
+#[test]
+fn move_note_into_and_out_of_the_bootstrap_carries_its_notice_and_a_long_note_moves() {
+    let v = vault();
+    // A long note, written before the server starts so that its first sweep indexes it.
+    let long = format!(
+        "# Big\n\nSummary.\n{}",
+        "\n## Part\n\nword word word word\n".repeat(2000)
+    );
+    v.write("loose/Big.md", &long);
+    let mut server = v.server();
+    let caching = server.ok("read_note", json!({"note": "ops/Caching"}));
+    let text = server.ok(
+        "move_note",
+        json!({"note": "ops/Caching", "new_path": "bootstrap/Caching", "expected_checksum": checksum_of(&caching)}),
+    );
+    assert!(
+        text.ends_with("notice: bootstrap/Caching loads as instructions at session start\n"),
+        "{text}"
+    );
+    let profile = server.ok("read_note", json!({"note": "bootstrap/Profile"}));
+    let text = server.ok(
+        "move_note",
+        json!({"note": "bootstrap/Profile", "new_path": "loose/Profile", "expected_checksum": checksum_of(&profile)}),
+    );
+    assert!(
+        text.ends_with("notice: bootstrap/Profile no longer loads as instructions at session start\n"),
+        "{text}"
+    );
+    // A long note: the checksum comes from a cut read.
+    let cut = server.ok("read_note", json!({"note": "loose/Big"}));
+    assert!(cut.contains("[cut at 4000 tokens."), "the note should be cut");
+    let text = server.ok(
+        "move_note",
+        json!({"note": "loose/Big", "new_path": "ops/Big", "expected_checksum": checksum_of(&cut)}),
+    );
+    assert_eq!(text, "moved: loose/Big -> ops/Big\nbroken links: none\n");
+    assert_eq!(fs::read_to_string(v.root.join("ops/Big.md")).unwrap(), long);
+}
+
+#[test]
+fn move_note_to_its_own_path_is_a_normal_result_not_an_error() {
+    let v = vault();
+    let mut server = v.server();
+    let checksum = checksum_of(&server.ok("read_note", json!({"note": "backend/Release"})));
+    // `isError` is false: `ok` fails the test on an error. A path with another case of a folder is the same path, since
+    // an existing folder keeps its spelling.
+    for path in ["backend/Release", "Backend/Release.md"] {
+        assert_eq!(
+            server.ok(
+                "move_note",
+                json!({"note": "backend/Release", "new_path": path, "expected_checksum": checksum})
+            ),
+            "The note is already at backend/Release, so nothing was moved."
+        );
+    }
+    assert!(v.root.join("backend/Release.md").exists());
 }

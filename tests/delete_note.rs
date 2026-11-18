@@ -230,40 +230,106 @@ fn a_whole_checksum_or_a_wrong_one_is_stale() {
     assert!(v.exists("ops/Caching.md"));
 }
 
-const TOO_LONG: &str = "The note is too long to read whole, so delete_note cannot check its checksum and nothing was deleted. Only the user can delete the file.";
+fn long_note() -> String {
+    let mut long = String::from(
+        "# Long
 
-#[test]
-fn a_note_over_the_read_limit_is_refused_before_the_checksum_and_returns_no_note() {
-    let mut long = String::from("# Long\n\nSummary.\n");
+Summary.
+",
+    );
     for i in 0..40 {
-        long.push_str(&format!("\n## Part {i}\n\n{}\n", "word ".repeat(400)));
+        long.push_str(&format!(
+            "
+## Part {i}
+
+{}
+",
+            "word ".repeat(400)
+        ));
     }
+    long
+}
+
+/// Doc 07 §10, "Long notes": a note over the read limit deletes like any other. The checksum comes from the header
+/// line of a cut read (§7.2), and the trash keeps the whole file.
+#[test]
+fn a_note_over_the_read_limit_deletes_with_the_checksum_of_a_cut_read() {
+    let long = long_note();
     let v = TestVault::new(&[("ops/Long.md", &long)]);
-    // A wrong checksum and the right one get the same refusal: it comes before the guard, and nothing is returned.
-    for checksum in ["000000000000".to_string(), sum(&long)] {
-        assert_eq!(
-            v.delete_at("ops/Long", &checksum, fixed_time()),
-            DeleteNote::Refused(TOO_LONG.to_string())
-        );
-    }
-    assert_eq!(v.file("ops/Long.md"), long);
+    let mut index = v.index();
+    let cut = recognitor::read::render(&index.read("ops/Long", None, None, LIMIT).unwrap());
+    assert!(cut.contains("[cut at 4000 tokens."), "the note should be cut");
+    let shown = cut
+        .lines()
+        .next()
+        .unwrap()
+        .rsplit_once("checksum: ")
+        .unwrap()
+        .1
+        .to_string();
+    assert_eq!(shown, sum(&long));
+    drop(index);
+    let text = v.delete("ops/Long", &shown);
+    assert_eq!(
+        text,
+        format!(
+            "deleted: ops/Long
+trash: {STAMP}/ops/Long.md
+broken links: none
+"
+        )
+    );
+    assert!(!v.exists("ops/Long.md"));
+    assert_eq!(v.file(&format!("{STAMP}/ops/Long.md")), long);
+    assert_eq!(v.counts(), (0, 0));
+}
+
+/// A stale checksum on a long note is the ordinary refusal: the note comes back cut, and its header line carries the
+/// checksum to retry with (doc 07 §5.3, "Cut like a read"). Nothing loops.
+#[test]
+fn a_stale_checksum_on_a_long_note_returns_the_cut_note_with_its_checksum() {
+    let long = long_note();
+    let v = TestVault::new(&[("ops/Long.md", &long)]);
+    let DeleteNote::Refused(text) = v.delete_at("ops/Long", "000000000000", fixed_time()) else {
+        panic!("a stale checksum must be refused");
+    };
+    assert!(
+        text.starts_with(&format!(
+            "The note changed since that checksum, so nothing was deleted. Current version:
+ops/Long  checksum: {}
+",
+            sum(&long)
+        )),
+        "{}",
+        &text[..200]
+    );
+    assert!(
+        text.trim_end().ends_with(']'),
+        "the cut note ends with its closing line"
+    );
+    assert!(v.exists("ops/Long.md"));
     assert!(!v.exists(".recognitor"));
-    assert_eq!(v.counts(), (1, 0));
 }
 
 #[test]
-fn the_read_limit_is_the_one_read_note_cuts_at() {
-    // About 200 tokens (estimate) of text: whole at the default limit, cut at 50, as `read_note` decides.
-    let text = format!("# Mid\n\n## Part\n\n{}\n", "word ".repeat(160));
+fn the_read_limit_does_not_matter_to_a_delete() {
+    // About 200 tokens (estimate) of text: cut at 50, whole at the default limit. Either way the checksum is enough.
+    let text = format!(
+        "# Mid
+
+## Part
+
+{}
+",
+        "word ".repeat(160)
+    );
     let v = TestVault::new(&[("ops/Mid.md", &text)]);
     let tight = v
         .index()
         .delete_note_at("ops/Mid", &sum(&text), 50, fixed_time())
         .unwrap();
-    assert_eq!(tight, DeleteNote::Refused(TOO_LONG.to_string()));
-    assert!(v.exists("ops/Mid.md"));
-    let default = v.delete("ops/Mid", &sum(&text));
-    assert!(default.starts_with("deleted: ops/Mid\n"), "{default}");
+    assert!(matches!(tight, DeleteNote::Deleted { .. }), "{tight:?}");
+    assert!(!v.exists("ops/Mid.md"));
 }
 
 // Stores (doc 07 §1.1).

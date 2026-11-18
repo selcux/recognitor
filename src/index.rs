@@ -928,8 +928,15 @@ pub(crate) fn unindex_deleted(tx: &Transaction<'_>, key: &str) -> Result<Vec<Bro
             .optional()?;
         broken.extend(found);
     }
+    // Doc 07 §10: by linking note id ignoring case, then line, predicate and target as written, as `move_note` sorts.
+    // An id, not a path: `ops/Run book.md` sorts before `ops/Run.md`, but `ops/Run` comes before `ops/Run book`.
     broken.sort_by(|a, b| {
-        (a.path.to_lowercase(), a.position, &a.predicate).cmp(&(b.path.to_lowercase(), b.position, &b.predicate))
+        (note_id(&a.path).to_lowercase(), a.position, &a.predicate, &a.target_ref).cmp(&(
+            note_id(&b.path).to_lowercase(),
+            b.position,
+            &b.predicate,
+            &b.target_ref,
+        ))
     });
     broken
         .into_iter()
@@ -953,6 +960,244 @@ pub(crate) fn unindex_deleted(tx: &Transaction<'_>, key: &str) -> Result<Vec<Bro
             })
         })
         .collect()
+}
+
+/// A link a move changed: where it leads now, who wrote it, and whether `relink` can fix it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MovedLink {
+    pub edge: BrokenEdge,
+    /// The linking note's id without its title: what `relink`'s `notes` takes.
+    pub source_id: String,
+    /// The link pointed to the moved note before the move and was written in another note, so `relink` rewrites it. The
+    /// moved note's own links never are (doc 07 §6.1: they are fixed with `edit_note`).
+    pub into_note: bool,
+}
+
+/// One link as it was before a move.
+struct LinkBefore {
+    source_key: String,
+    predicate: String,
+    ref_key: String,
+    target_ref: String,
+    position: u32,
+    target_key: Option<String>,
+}
+
+/// Re-indexes a note a write tool has just moved (doc 07 §5.1 step 5, §6.1), inside that tool's transaction. `old_key`
+/// is the note's key before the move, `new_rel` its path now (the file is already there) and `bytes` its content.
+///
+/// The note's rows under the old key go and the rows under the new key come in; when the key is the same (a case-only
+/// rename) the rows are rewritten in place. Links are resolved again where the move can change them (doc 03 §4): the
+/// ones whose key matches a name or path the note had or has now, and the note's own. Returns every link whose target
+/// changed, by the rule of doc 07 §6.1, "Broken means changed by the move": the link led to a note before, and now leads
+/// nowhere, to several notes, or to another note than it did. A link that led nowhere before is not listed, even when
+/// it reaches a note now. The moved note counts as the same note at both keys. Linking notes come in path order
+/// (ignoring case) and each note's links in written order.
+pub(crate) fn reindex_moved(
+    tx: &Transaction<'_>,
+    root: &Path,
+    old_key: &str,
+    new_rel: &str,
+    bytes: Vec<u8>,
+) -> Result<Vec<MovedLink>> {
+    let new_key = note_key(new_rel);
+    let old_title: String = tx.query_row("SELECT title FROM notes WHERE key = ?1", [old_key], |r| r.get(0))?;
+    let old_ns = namespace_of_key(old_key).unwrap_or_default().to_string();
+    let new_ns = namespace_of_key(&new_key).unwrap_or_default().to_string();
+    let new_title = parse_note(&String::from_utf8_lossy(&bytes))
+        .title
+        .unwrap_or_else(|| file_stem(note_id(new_rel)).to_string());
+    let mut names = names_of(old_key, &old_ns, &old_title);
+    names.extend(names_of(&new_key, &new_ns, &new_title));
+    names.sort();
+    names.dedup();
+
+    // Before: the links into the note, from other notes, found by every name it had or has and by the target they
+    // stored; and the note's own links.
+    let mut incoming: BTreeMap<(String, String, String), LinkBefore> = BTreeMap::new();
+    let mut own: HashMap<(String, String), Option<String>> = HashMap::new();
+    {
+        let mut by_ref = tx.prepare_cached(
+            "SELECT source_key, predicate, ref_key, target_ref, position, target_key FROM edges \
+             WHERE ref_key = ?1 AND source_key != ?2",
+        )?;
+        let mut by_target = tx.prepare_cached(
+            "SELECT source_key, predicate, ref_key, target_ref, position, target_key FROM edges \
+             WHERE target_key = ?1 AND source_key != ?1",
+        )?;
+        let row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<LinkBefore> {
+            Ok(LinkBefore {
+                source_key: r.get(0)?,
+                predicate: r.get(1)?,
+                ref_key: r.get(2)?,
+                target_ref: r.get(3)?,
+                position: r.get(4)?,
+                target_key: r.get(5)?,
+            })
+        };
+        let mut found: Vec<LinkBefore> = Vec::new();
+        for name in &names {
+            let rows = by_ref.query_map(params![name, old_key], row)?;
+            found.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+        }
+        let rows = by_target.query_map([old_key], row)?;
+        found.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+        for l in found {
+            incoming.insert((l.source_key.clone(), l.predicate.clone(), l.ref_key.clone()), l);
+        }
+        let mut stmt =
+            tx.prepare_cached("SELECT predicate, target_ref, target_key FROM edges WHERE source_key = ?1")?;
+        let rows = stmt.query_map([old_key], |r| Ok(((r.get(0)?, r.get(1)?), r.get(2)?)))?;
+        for r in rows {
+            let (k, v) = r?;
+            own.insert(k, v);
+        }
+    }
+
+    // The move: the old rows go (their cascade and trigger leave the links into the note unresolved), the new rows come
+    // in, and the links that could reach the note, by either place, are resolved again.
+    if old_key != new_key {
+        tx.execute("DELETE FROM notes WHERE key = ?1", [old_key])?;
+    }
+    reindex_written(tx, root, new_rel, bytes)?;
+    let stored_target = |source_key: &str, predicate: &str, ref_key: &str| -> Result<Option<String>> {
+        Ok(tx
+            .query_row(
+                "SELECT target_key FROM edges WHERE source_key = ?1 AND predicate = ?2 AND ref_key = ?3",
+                params![source_key, predicate, ref_key],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten())
+    };
+    let mut counters = Counters::default();
+    let mut warnings = Vec::new();
+    for l in incoming.values() {
+        let source_id: String = tx.query_row("SELECT path FROM notes WHERE key = ?1", [&l.source_key], |r| r.get(0))?;
+        let current = stored_target(&l.source_key, &l.predicate, &l.ref_key)?;
+        let edge = EdgeRef {
+            source_key: &l.source_key,
+            source_id: note_id(&source_id),
+            predicate: &l.predicate,
+            ref_key: &l.ref_key,
+            target_ref: &l.target_ref,
+            position: l.position,
+            current: current.as_deref(),
+        };
+        resolve_edge(
+            tx,
+            namespace_of_key(&l.source_key).unwrap_or_default(),
+            &edge,
+            &mut counters,
+            &mut warnings,
+        )?;
+    }
+
+    // After: a link is listed when it led to a note before and does not lead to the same note now.
+    struct Changed {
+        source_key: String,
+        predicate: String,
+        target_ref: String,
+        ref_key: String,
+        position: u32,
+        into_note: bool,
+    }
+    let unchanged = |before: &str, after: Option<&str>| match after {
+        Some(a) => a == before || (before == old_key && a == new_key),
+        None => false,
+    };
+    let mut changed: Vec<Changed> = Vec::new();
+    for l in incoming.values() {
+        let Some(before) = l.target_key.as_deref() else {
+            continue;
+        };
+        let after = stored_target(&l.source_key, &l.predicate, &l.ref_key)?;
+        if !unchanged(before, after.as_deref()) {
+            changed.push(Changed {
+                source_key: l.source_key.clone(),
+                predicate: l.predicate.clone(),
+                target_ref: l.target_ref.clone(),
+                ref_key: l.ref_key.clone(),
+                position: l.position,
+                into_note: before == old_key,
+            });
+        }
+    }
+    {
+        let mut stmt = tx.prepare_cached(
+            "SELECT predicate, target_ref, ref_key, position, target_key FROM edges WHERE source_key = ?1",
+        )?;
+        let rows = stmt.query_map([&new_key], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, u32>(3)?,
+                r.get::<_, Option<String>>(4)?,
+            ))
+        })?;
+        for r in rows {
+            let (predicate, target_ref, ref_key, position, after) = r?;
+            let Some(Some(before)) = own.get(&(predicate.clone(), target_ref.clone())) else {
+                continue;
+            };
+            if !unchanged(before, after.as_deref()) {
+                changed.push(Changed {
+                    source_key: new_key.clone(),
+                    predicate,
+                    target_ref,
+                    ref_key,
+                    position,
+                    into_note: false,
+                });
+            }
+        }
+    }
+
+    let mut out: Vec<(String, MovedLink, u32)> = Vec::new();
+    for c in changed {
+        let (path, title, title_key, name_key): (String, String, String, String) = tx.query_row(
+            "SELECT path, title, title_key, name_key FROM notes WHERE key = ?1",
+            [&c.source_key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        let source_ns = namespace_of_key(&c.source_key).unwrap_or_default();
+        let now = match stored_target(&c.source_key, &c.predicate, &c.ref_key)? {
+            Some(target) => {
+                let path: String = tx.query_row("SELECT path FROM notes WHERE key = ?1", [&target], |x| x.get(0))?;
+                LinkNow::Note(note_id(&path).to_string())
+            }
+            None => match resolve(tx, source_ns, &c.ref_key)? {
+                Resolution::Ambiguous(_) => LinkNow::Ambiguous,
+                _ => LinkNow::Nowhere,
+            },
+        };
+        let shown_title = (title_key != name_key).then_some(title.as_str());
+        out.push((
+            note_id(&path).to_lowercase(),
+            MovedLink {
+                edge: BrokenEdge {
+                    source: crate::paths::titled_id(note_id(&path), shown_title),
+                    predicate: c.predicate,
+                    target_ref: c.target_ref,
+                    now,
+                },
+                source_id: note_id(&path).to_string(),
+                into_note: c.into_note,
+            },
+            c.position,
+        ));
+    }
+    // Two links on one line have no further order in the index; the target text keeps the list the same on every call.
+    out.sort_by(|a, b| {
+        (&a.0, a.2, &a.1.edge.predicate, &a.1.edge.target_ref).cmp(&(
+            &b.0,
+            b.2,
+            &b.1.edge.predicate,
+            &b.1.edge.target_ref,
+        ))
+    });
+    Ok(out.into_iter().map(|(_, link, _)| link).collect())
 }
 
 /// Edge rows in insertion order: explicit relations first, then inline links, one row per `(predicate, ref_key)` with

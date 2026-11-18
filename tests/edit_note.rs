@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use recognitor::edit_note::{EditNote, Op, render};
+use recognitor::hash::sha256_prefix;
 use recognitor::read::{Read, render as render_read};
 use recognitor::{Error, Index, SweepOptions};
 
@@ -333,7 +334,14 @@ fn a_refusal_cuts_the_note_at_the_read_limit() {
         .edit_note("a/Long", &find_replace("absent", "x"), 300)
         .unwrap();
     let text = render(&refused);
-    assert!(text.contains("\na/Long\n# Long\n"), "{text}");
+    // The cut is the read's, and its header line carries the whole-note checksum (doc 07 §5.3, §7.2).
+    assert!(
+        text.contains(&format!(
+            "\na/Long  checksum: {}\n# Long\n",
+            sha256_prefix(long.as_bytes(), 12)
+        )),
+        "{text}"
+    );
     assert!(text.contains("[cut at 300 tokens."), "{text}");
     assert_eq!(v.file("a/Long.md"), long);
 }

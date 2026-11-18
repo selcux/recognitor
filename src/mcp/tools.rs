@@ -12,6 +12,7 @@ use crate::bootstrap::DEFAULT_MAX_TOKENS as BOOTSTRAP_DEFAULT_MAX_TOKENS;
 use crate::config;
 use crate::delete_note::DeleteNote;
 use crate::edit_note::{EditNote, Op};
+use crate::move_note::MoveNote;
 use crate::read::DEFAULT_MAX_TOKENS as READ_DEFAULT_MAX_TOKENS;
 use crate::write_note::WriteNote;
 use crate::{Error, Index};
@@ -51,9 +52,9 @@ pub struct Tool {
 
 const PAGE_NUMBER: &str = "the number from the \"page N\" line";
 
-/// The tools, in the order of doc 07 §2.1: `write_note`, `edit_note`, `relink` and `delete_note` are the write tools
-/// so far.
-pub const TOOLS: [Tool; 9] = [
+/// The tools, in the order of doc 07 §2.1: `write_note`, `edit_note`, `move_note`, `relink` and `delete_note` are the
+/// write tools.
+pub const TOOLS: [Tool; 10] = [
     Tool {
         name: "load_bootstrap",
         description: "Load the user's standing instructions: who they are, how to answer, rules for every project. Call once at session start, unless a hook already added them.",
@@ -198,6 +199,30 @@ pub const TOOLS: [Tool; 9] = [
                 description: "the section's checksum, for `replace_section`",
                 kind: Kind::Text,
                 required: false,
+            },
+        ],
+    },
+    Tool {
+        name: "move_note",
+        description: "Move or rename a note. Pass its checksum from `read_note`. Returns the links the move broke; show them to the user, who picks the notes `relink` fixes. Links inside the moved note are fixed with `edit_note`.",
+        args: &[
+            Arg {
+                name: "note",
+                description: "an id, path or name",
+                kind: Kind::Text,
+                required: true,
+            },
+            Arg {
+                name: "new_path",
+                description: "from the vault root, `.md` optional",
+                kind: Kind::Text,
+                required: true,
+            },
+            Arg {
+                name: "expected_checksum",
+                description: "the checksum of the version it moves",
+                kind: Kind::Text,
+                required: true,
             },
         ],
     },
@@ -504,6 +529,27 @@ pub fn call(index: &mut Index, config_file: &Path, name: &str, arguments: &Map<S
                 let new = args.required_text("new")?;
                 let relinked = index.relink(old, new, &args.text_list("notes")).map_err(failed)?;
                 Ok(crate::relink::render(&relinked))
+            }
+            "move_note" => {
+                let note = args.required_text("note")?;
+                // An empty string counts as not given (doc 07 §2.1, §11), as for `delete_note`: a move has no other
+                // way to be guarded, and an empty path names nothing.
+                let given = |name: &str| {
+                    args.required_text(name)
+                        .ok()
+                        .filter(|v| !v.is_empty())
+                        .ok_or_else(|| format!("move_note needs {name}"))
+                };
+                let new_path = given("new_path")?;
+                let expected = given("expected_checksum")?;
+                let max_tokens = config::read_max_tokens(config_file)
+                    .map_err(failed)?
+                    .unwrap_or(READ_DEFAULT_MAX_TOKENS);
+                match index.move_note(note, new_path, expected, max_tokens).map_err(failed)? {
+                    // Doc 07 §2.1: a refusal is an error, so it never passes for a success.
+                    MoveNote::Refused(text) => Err(text),
+                    done => Ok(crate::move_note::render(&done)),
+                }
             }
             "delete_note" => {
                 let note = args.required_text("note")?;

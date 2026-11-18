@@ -2,7 +2,8 @@
 //! nowhere.
 //!
 //! It follows the write path of doc 07 §5.1: the write lock for the whole call, the note's file read **from disk**
-//! (the index only says where it is), the guard of §5.2 (the whole-note checksum), the file renamed into
+//! (the index only says where it is), the guard of §5.2 (the whole-note checksum, which a cut read of a long note
+//! shows too, §7.2: a long note deletes like any other), the file renamed into
 //! `.recognitor/trash/<timestamp>/<original path>`, and the note's index rows removed in the same transaction. A
 //! refusal rolls the transaction back and returns the current note, cut like a read (§5.3).
 
@@ -17,7 +18,7 @@ use crate::error::{Error, Result};
 use crate::hash::sha256_prefix;
 use crate::index::{BrokenEdge, LinkNow, unindex_deleted};
 use crate::paths::{ARCHIVE_NAMESPACE, BOOTSTRAP_NAMESPACE, namespace_of_key, note_id};
-use crate::read::{self, CHECKSUM_LEN, Read};
+use crate::read::CHECKSUM_LEN;
 use crate::resolve::{NoteLookup, find_note, several_text};
 use crate::write::{bootstrap_deleted_notice, move_to_trash};
 use crate::write_note::with_current;
@@ -104,26 +105,7 @@ pub fn render(d: &DeleteNote) -> String {
             bootstrap,
         } => {
             let mut s = format!("deleted: {id}\ntrash: {trash}\n");
-            if broken.is_empty() {
-                s.push_str("broken links: none\n");
-            } else {
-                let mut sources: Vec<&str> = broken.iter().map(|b| b.source.as_str()).collect();
-                sources.sort_unstable();
-                sources.dedup();
-                s.push_str(&format!(
-                    "broken links: {} in {}\n",
-                    counted(broken.len(), "link"),
-                    counted(sources.len(), "note")
-                ));
-                for b in broken {
-                    let mark = match &b.now {
-                        Now::Nowhere => String::new(),
-                        Now::Ambiguous => "  (ambiguous)".to_string(),
-                        Now::Note(id) => format!("  (now {id})"),
-                    };
-                    s.push_str(&format!("- {}: {} {}{mark}\n", b.source, b.predicate, b.target));
-                }
-            }
+            s.push_str(&broken_section(broken));
             if *bootstrap {
                 s.push_str(&bootstrap_deleted_notice(id));
                 s.push('\n');
@@ -133,7 +115,32 @@ pub fn render(d: &DeleteNote) -> String {
     }
 }
 
-fn counted(n: usize, word: &str) -> String {
+/// The part of a `delete_note` or `move_note` result that lists the links the call broke (doc 07 §10): the count line,
+/// then one line per link, or `broken links: none`. Every line ends with its line break.
+pub(crate) fn broken_section(broken: &[BrokenLink]) -> String {
+    if broken.is_empty() {
+        return "broken links: none\n".to_string();
+    }
+    let mut sources: Vec<&str> = broken.iter().map(|b| b.source.as_str()).collect();
+    sources.sort_unstable();
+    sources.dedup();
+    let mut s = format!(
+        "broken links: {} in {}\n",
+        counted(broken.len(), "link"),
+        counted(sources.len(), "note")
+    );
+    for b in broken {
+        let mark = match &b.now {
+            Now::Nowhere => String::new(),
+            Now::Ambiguous => "  (ambiguous)".to_string(),
+            Now::Note(id) => format!("  (now {id})"),
+        };
+        s.push_str(&format!("- {}: {} {}{mark}\n", b.source, b.predicate, b.target));
+    }
+    s
+}
+
+pub(crate) fn counted(n: usize, word: &str) -> String {
     if n == 1 {
         format!("1 {word}")
     } else {
@@ -174,11 +181,6 @@ impl Index {
 const ARCHIVE_APPEND_ONLY: &str =
     "Archive notes are append only: delete_note never removes one. Only the user can delete the file.";
 
-/// The refusal for a note `read_note` would cut (doc 07 §5.3, §10): a cut read shows no whole-note checksum, so the agent
-/// cannot hold a valid one, and a stale-checksum rejection would return the cut note again in a loop.
-const TOO_LONG: &str = "The note is too long to read whole, so delete_note cannot check its checksum and nothing was \
-                        deleted. Only the user can delete the file.";
-
 /// The reason of a stale checksum. Doc 07 §5.3 words it for an overwrite ("nothing was written"); a delete writes
 /// nothing, so this says what did not happen.
 const CHANGED: &str = "The note changed since that checksum, so nothing was deleted.";
@@ -210,11 +212,6 @@ fn delete(
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(Error::NoteNotFound(note.to_string())),
         Err(e) => return Err(Error::io(&abs, e)),
     };
-    // Doc 07 §10: a note `read_note` would cut has no whole-note checksum to give, so it is refused before the guard.
-    // The read code makes the decision, so the two cannot disagree.
-    if matches!(read::read_file(&path, &bytes, max_tokens), Read::Cut(_)) {
-        return Ok(DeleteNote::Refused(TOO_LONG.to_string()));
-    }
     // Doc 07 §5.2: the whole-note checksum, matched ignoring case (§11).
     if !expected.eq_ignore_ascii_case(&sha256_prefix(&bytes, CHECKSUM_LEN)) {
         return Ok(DeleteNote::Refused(with_current(CHANGED, &path, &bytes, max_tokens)));
