@@ -69,6 +69,7 @@ A line ending in "page N" means more results exist.
 | `search` | Full-text search. Returns ids, summaries and matching facts, 5 per page. Notes with every word come first; when fewer than 5 do, notes with only some of the words fill the first page. No operators. `ns` ranks that namespace first without filtering; `ns: "archive"` also searches session records. | `query`: plain words. `ns`: from `load_namespace`. `page`: the number from the "page N" line |
 | `context` | Show a note's links out and in, each with its summary, without reading the neighbors. Use it to pick what to read next. | `note`: an id, path or name. `page`: the number from the "page N" line |
 | `read_note` | Return a note's full text with its checksum. `section` returns one section. A note over the token limit is cut to its best sections; the closing line says how to read the rest. | `note`: an id, path or name. `section`: heading text as written. `query`: words that choose which sections to keep when the note is cut |
+| `write_note` | Create a note, or replace a whole note. Without `expected_checksum` it only creates; to replace a note, pass the checksum from `read_note`. To change part of a note, use `edit_note`. | `path`: from the vault root, `.md` optional. `content`: the whole file, frontmatter included. `expected_checksum`: the checksum of the version it replaces |
 | `relink` | Rewrite the links that pointed to a moved note, in the notes the user chose. A link that is already gone is skipped with a warning. | `old`: the note's id before the move. `new`: an id, path or name. `notes`: the linking notes, each an id, path or name |
 
 - **Word for word:** the server sends this text exactly as written here. The retrieval benchmark ([02-open-questions-and-tradeoffs.md §11](02-open-questions-and-tradeoffs.md#11-target-scale--benchmark-resolved)) can change it, through this section.
@@ -78,7 +79,7 @@ A line ending in "page N" means more results exist.
 
 | Outcome | MCP | CLI |
 | :--- | :--- | :--- |
-| Error: `"x" not found`, `load_namespace("bootstrap")`, a query with no words, no such section | A tool result with `isError: true`; its text is the message | `error: <message>` on stderr, exit 1 |
+| Error: `"x" not found`, `load_namespace("bootstrap")`, a query with no words, no such section, a refused write (§5.3) | A tool result with `isError: true`; its text is the message | `error: <message>` on stderr, exit 1 |
 | Normal result: no hits, several matches (§6.3), a page past the end, no links | A tool result with the text | The text on stdout, exit 0 |
 | Bad arguments: `query` missing, `page` not a number, an argument the tool does not take | As an error | `error: <message>` and the usage text on stderr, exit 2 |
 | Unknown tool: a name not in `tools/list` | A JSON-RPC error (`-32602`), as the MCP spec prescribes. Clients offer only listed tools, so agents do not reach it | No CLI twin: an unknown command is a bad argument |
@@ -212,6 +213,17 @@ A rejection carries a short reason plus the current version of the part that cla
 
 The rejection never repeats the agent's own request: the agent already has it in context.
 
+- **Cut like a read:** the current note is shown exactly as `read_note` shows it (§7), header line included. A note over the read limit is cut by §7.2 and carries only section checksums, so a partial copy can never be used to overwrite the whole note.
+- **An archive refusal returns nothing:** the agent cannot overwrite an archive note with any version (§1.1), so the message names the fix instead.
+- **Texts:** each refusal is a reason, then the current data:
+
+| Refusal | Text |
+| :--- | :--- |
+| Create on an existing note | `The note already exists, so nothing was written. To replace it, call again with its checksum as expected_checksum. Current version:`, a line break, the note |
+| Overwrite with a stale checksum | `The note changed since that checksum, so nothing was written. Current version:`, a line break, the note |
+| Create or move onto case twins | `Names that differ only in case cannot exist together, so nothing was written. On disk:`, then one path per line, indented two spaces, a folder ending in `/` |
+| `write_note` with a checksum on an archive note | `Archive notes are append only: write_note never overwrites one. To add to it, use edit_note with append.` |
+
 ---
 
 ## 6. Note Identity and Moves
@@ -221,6 +233,7 @@ Recognitor follows the Obsidian model: a note's address is its path. It replaced
 - **Id = path:** a note's id is its path from the vault root without `.md` (`common/working-style/ADHD profile`). Output always shows it as written. The database stores its lowercase **key** instead ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)), and no output shows the key. Both come from the path, never from frontmatter, with no slug conversion, so nothing can drift.
 - **Kept as written, matched in lowercase:** links, tool arguments and namespaces match a lowercase key of the path ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)).
 - **ASCII names only:** every note and folder name is ASCII, so a key means the same on every platform. Other files (images, PDFs) are never indexed, so their names are not checked. A non-ASCII name is handled like a case twin in the table below.
+- **Portable paths:** a path a write tool creates (`write_note`'s `path`, `move_note`'s `new_path`) is refused when a part is empty, `.` or `..`, or starts with a dot; when a part contains a control character or any of `\ : * ? " < > |`; or when a folder name ends in a space or a dot. `..` would leave the vault, hidden folders are never indexed (`.recognitor/` is the trash), `:` creates an alternate data stream on NTFS, and Windows drops a trailing space or dot, so two folder names would land on one folder. The refusal reads `The path is not a note path. Use folder/name from the vault root, with no empty, hidden or ".." parts and none of \ : * ? " < > |.`
 - **No case twins:** two paths with the same key are an error at any level, folders included (`common/ADHD profile.md` and `common/adhd profile.md`; `Baseline/` and `baseline/`). The same name in different folders is fine (every namespace has an `index.md`).
 
 | Where | What happens with a case twin or a non-ASCII name |
@@ -490,11 +503,16 @@ Both are built from the rules above; no new decisions.
 | :--- | :--- | :--- |
 | **Input** | `path` from the vault root (`.md` optional), `content` (the whole file, frontmatter included), optional `expected_checksum` | `note`, `new_path`, `expected_checksum` |
 | **Without checksum** | Create only; rejected if the note exists (§5.2) | Not allowed |
-| **Refused when** | The key already exists (§6), the path has no top-level folder, or the path has a non-ASCII character (§6) | The target's key already exists, unless it is the note's own key: a case-only rename is allowed and breaks no links (§6). Also when `new_path` has no top-level folder or a non-ASCII character |
+| **Refused when** | The key already exists (§6), the path has no top-level folder, the path has a non-ASCII character, or the path is not portable (§6) | The target's key already exists, unless it is the note's own key: a case-only rename is allowed and breaks no links (§6). Also when `new_path` has no top-level folder or a non-ASCII character |
 | **Output** | `<id>  checksum: <12 hex>` | The new id, and every link the move broke, with the `relink` call for links into the note; links inside it are fixed with `edit_note` (§6.1) |
 | **Folders** | Created as needed; existing folders keep their spelling (§6) | Created as needed; existing folders keep their spelling (§6) |
 
 - **Stores:** the bootstrap notice and the archive limits follow §1.1.
+- **Checksum, but no note:** `write_note` with `expected_checksum` on a path where no note exists is the §6.3 error `"<path>" not found`, quoting the path as given. It never creates, so a typo in the path cannot make a new note.
+- **Empty `content` is refused:** content that is empty or only whitespace gets `write_note needs content` (§2.1). An empty overwrite would remove a note without the trash; that is `delete_note`'s job (§10).
+- **`expected_checksum: ""` counts as absent:** models often send an empty string for an optional argument, and a create never overwrites, so this is safe. Any other value is the 12-character form (§7.1), matched ignoring case.
+- **No title in the result:** the output shows the id alone, unlike §4.2, because the agent just wrote the title.
+- **Path refusals:** `The path has no top-level folder. Write it from the vault root, as folder/name.` and `The path has a non-ASCII character. Note and folder names are ASCII only.`, plus the portable-path text (§6). Other refusals: §5.3.
 
 ---
 
