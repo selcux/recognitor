@@ -70,6 +70,7 @@ A line ending in "page N" means more results exist.
 | `context` | Show a note's links out and in, each with its summary, without reading the neighbors. Use it to pick what to read next. | `note`: an id, path or name. `page`: the number from the "page N" line |
 | `read_note` | Return a note's full text with its checksum. `section` returns one section. A note over the token limit is cut to its best sections; the closing line says how to read the rest. | `note`: an id, path or name. `section`: heading text as written. `query`: words that choose which sections to keep when the note is cut |
 | `write_note` | Create a note, or replace a whole note. Without `expected_checksum` it only creates; to replace a note, pass the checksum from `read_note`. To change part of a note, use `edit_note`. | `path`: from the vault root, `.md` optional. `content`: the whole file, frontmatter included. `expected_checksum`: the checksum of the version it replaces |
+| `edit_note` | Change part of a note without rewriting it. `append` adds text at the end of a section, `add_observation` and `add_relation` add one line, `find_replace` replaces text that occurs exactly once, `replace_section` replaces a section and needs its checksum from `read_note`. | `note`: an id, path or name. `op`: one of the five. `text`: the text to add, the line, the replacement or the new section. `section`: heading text, for `append` and `replace_section`. `find`: the exact text to replace, for `find_replace`. `expected_checksum`: the section's checksum, for `replace_section` |
 | `relink` | Rewrite the links that pointed to a moved note, in the notes the user chose. A link that is already gone is skipped with a warning. | `old`: the note's id before the move. `new`: an id, path or name. `notes`: the linking notes, each an id, path or name |
 
 - **Word for word:** the server sends this text exactly as written here. The retrieval benchmark ([02-open-questions-and-tradeoffs.md §11](02-open-questions-and-tradeoffs.md#11-target-scale--benchmark-resolved)) can change it, through this section.
@@ -223,6 +224,13 @@ The rejection never repeats the agent's own request: the agent already has it in
 | Overwrite with a stale checksum | `The note changed since that checksum, so nothing was written. Current version:`, a line break, the note |
 | Create or move onto case twins | `Names that differ only in case cannot exist together, so nothing was written. On disk:`, then one path per line, indented two spaces, a folder ending in `/` |
 | `write_note` with a checksum on an archive note | `Archive notes are append only: write_note never overwrites one. To add to it, use edit_note with append.` |
+| `find_replace`, `find` not in the note | `The text to replace was not found, so nothing was written. Current version:`, a line break, the note |
+| `find_replace`, `find` more than once (overlaps count) | `The text to replace occurs N times, so nothing was written; it must occur exactly once. Current version:`, a line break, the note |
+| `replace_section` with a stale checksum | `The section changed since that checksum, so nothing was written. Current version:`, a line break, the section as `read_note` shows it (§7.3) |
+| `replace_section` text that does not start with a heading line | `The new section must start with its heading line, so nothing was written. Current heading: `, then the section's heading line as on disk |
+| `add_observation` with a line that is not an observation | `That is not an observation line, so nothing was written. Give one line without its leading "- ", as [category] text, for example: [fact] Tokens expire after 15 minutes.` |
+| `add_relation` with a line that is not a typed relation | `That is not a typed relation line, so nothing was written. Give one line without its leading "- ", as predicate [[Target]], for example: part_of [[Security]].` |
+| An edit to a note that is not valid UTF-8 | `<id> is not valid UTF-8, so nothing was written.` |
 
 ---
 
@@ -480,6 +488,17 @@ Every edit case maps to one op:
 | Rewrite the whole note | `write_note` with a checksum (§5.2) |
 
 - **Rejected: `prepend`.** The top of a note is frontmatter, title and summary, so there is no sensible place to insert; `find_replace` covers the rare case.
+- **Arguments:** as in §2.1. `section` names a heading as `read_note`'s does (§7.3): matching, several matches and no match work the same.
+- **Observation and relation lines:** `text` is the line without its leading `- `, which the tool adds: `[fact] Tokens expire after 15 minutes.`, `part_of [[Security]]`. A line that is not an observation ([03-markdown-format-and-edge-syntax.md §2, "Observation Syntax"](03-markdown-format-and-edge-syntax.md#observation-syntax)) or a typed relation (doc 03 §3, Tier 1) is refused: it would sit in the note as a plain list item and never be indexed.
+- **Where new text goes:** `append` without `section` inserts before `## Observations`; without it, before `## Relations`; with neither, at the end of the note. A `## Observations` that `add_observation` creates goes before `## Relations`, or at the end; a `## Relations` that `add_relation` creates goes at the end.
+- **Result:** `<id>  checksum: <12 hex>`, as `write_note` (§11), plus the bootstrap notice (§1.1).
+- **Already there:** `add_observation` or `add_relation` with a line the section already has writes nothing and returns a normal result: `Already there, nothing was written.`, a line break, then the result line. The lines are compared after trimming, in the section's own text, subsections excluded. No bootstrap notice, because nothing was written.
+- **Archive:** any op but `append` on an archive note is refused: `Archive notes are append only: use append to add to one.`
+- **Argument messages:** `edit_note needs a note`, `edit_note needs an op`, `edit_note needs text`, `edit_note needs find`, `edit_note needs section`, `edit_note needs expected_checksum`; an unknown op gets `op needs one of append, add_observation, add_relation, find_replace, replace_section`. An argument the op does not take is `unexpected argument: <name>` (§2.1), so `section` with `add_observation` cannot put the line somewhere unintended. An empty string counts as not given, because models fill optional arguments with `""`.
+- **Empty `text`:** `append`, `add_observation` and `add_relation` need text. For `find_replace`, empty `text` deletes the found text; whitespace is a replacement like any other, so `foo  bar` can become `foo bar`. For `replace_section`, `text` that is empty or only whitespace deletes the whole section.
+- **`replace_section` text** is the whole new section, heading included. Text that does not start with a heading line is refused (§5.3), because its body would merge into the section above.
+- **Spacing:** `append` puts the text after the section's last content line, subsections included, with one blank line above it; when that line and the new text are both list items, the text joins the list with no blank line. The blank lines that followed stay after the new text. `add_observation` and `add_relation` put the line at the end of the section's own text, before any subsection.
+- **Line breaks:** a line break in `find` matches `\n` or `\r\n` in the note, and new text is written with the note's line breaks, so an agent never has to type `\r`.
 
 ---
 
