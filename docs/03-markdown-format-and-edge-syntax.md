@@ -159,7 +159,7 @@ Recognitor follows the Obsidian model: a note's address is its path ([07-interfa
 - **Namespace:** the top-level folder under the vault root, by its key (`common/working-style/ADHD profile.md` → `common`, and `Common/` would be `common` too). Deeper folders (`working-style`, `personas`) are just folders. Every note has a namespace: files directly in the vault root (`AGENTS.md`, `README.md`) are not notes and are never indexed. The namespace is never declared in frontmatter, so it has exactly one source. Hidden folders (`.git/`, `.obsidian/`, `.recognitor/`) are not namespaces and are never indexed.
 - **Reserved namespaces:** `bootstrap` (loaded at session start; always `<vault>/bootstrap/`) and `archive`. See [04-information-stores-and-lifecycle.md](04-information-stores-and-lifecycle.md).
 - **Entry point:** every namespace has an `index.md` at its top level, found whatever its case (`Index.md` works). `lint` warns when it is not spelled `index.md`.
-- **Moves:** moving a file changes its id. Moving it into another top-level folder also moves the note into that namespace. Links to it can break; `move_note` reports them and `relink` fixes the ones the user picks ([07-interface-contracts.md §6.1](07-interface-contracts.md#61-moving-a-note)).
+- **Moves:** moving a file changes its id. Moving it into another top-level folder also moves the note into that namespace. Links to it can break; `move_note` reports them and `relink` fixes them in the notes the user picks ([07-interface-contracts.md §6.1](07-interface-contracts.md#61-moving-a-note)).
 
 ### Links: resolved to a note id
 

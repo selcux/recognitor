@@ -188,6 +188,7 @@ SQLite protects its own data, but the notes are plain files outside it. Every wr
 | Edit | Rejected when |
 | :--- | :--- |
 | `append`, `add_observation`, `add_relation` | Never: applied to the newest version |
+| `relink` | Never: a link is rewritten only while it is still there, and skipped otherwise (§6.1) |
 | `find_replace` (text X → Y) | X no longer occurs exactly once |
 | `replace_section` | The section's checksum differs from `expected_checksum` |
 | Create (`write_note` without `expected_checksum`) | A file or folder with the same key exists on disk (§5.1 step 2) |
@@ -238,8 +239,8 @@ Recognitor follows the Obsidian model: a note's address is its path. It replaced
 An MCP tool cannot pause mid-call to ask the user, so a move takes two calls:
 
 1. `move_note(note, new_path, expected_checksum)` moves the file and returns the links that are now broken.
-2. The agent shows the list to the user, who picks which links to update.
-3. `relink(old, new, notes)` rewrites the chosen links. Each rewrite is a guarded edit of the linking note (§5).
+2. The agent shows the list to the user, who picks which linking notes to update.
+3. `relink(old, new, notes)` rewrites the links to the moved note in the chosen notes. One write lock (§5.1) covers the call; each note is read from disk, patched and renamed on its own.
 
 - **CLI:** `recognitor move` asks the user directly and does both steps in one command.
 - **Broken means changed by the move, whatever the link looks like:** under the write lock, `move_note` resolves the affected links before and after the move: the links whose key matches one of the note's names, and the note's own links. It reports every link whose target changed or became a ghost:
@@ -253,19 +254,33 @@ An MCP tool cannot pause mid-call to ask the user, so a move takes two calls:
 
 - **Links inside the moved note** are fixed with `edit_note` (`find_replace`), because `relink` rewrites only links that point to the moved note.
 
-**`relink` never rejects.** Each linking note is handled on its own. Rewriting a link replaces only the link text, so it cannot overwrite anyone's work and needs no checksum:
+**Which links `relink` rewrites:** in each chosen note, the links that pointed to the note at `old`. A link qualifies when it resolves to the note as if the note still were at `old`, and does not resolve to `new` now. A key match alone is not enough: in `ops/Runbook`, `[[Caching]]` can point to `ops/Caching` while `[[ideas::Caching]]` points to the moved note.
+
+**The new link follows the link rules** ([03-markdown-format-and-edge-syntax.md §3 and §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)): wherever the note moved, the link is set to reach it from the linking note. It keeps its form; the alias, `#heading`, `!` and a written `.md` stay, and so does the name as written (title or filename). A `ns::` prefix marks a link between namespaces, so it appears exactly when the target is in another namespace:
+
+| Old link | New link, after `ideas/Caching` moves to `design/Caching` |
+| :--- | :--- |
+| Path: `[[ideas/Caching]]` | `[[design/Caching]]` |
+| Prefixed or name, linking note outside `design` | `[[design::Caching]]` |
+| Prefixed or name, linking note inside `design` | `[[Caching]]` |
+| Relative: `[[../ideas/Caching]]`, `[text](../ideas/Caching.md)` | The relative path from the linking note to the new file; percent-encoded in a Markdown link |
+
+- **Fallback:** when that link would not reach `new` alone (two `Caching` notes in different folders of `design`), the path form is written instead.
+
+**`relink` never rejects.** Each linking note is handled on its own. Rewriting a link replaces only the link text, so it cannot overwrite anyone's work and needs no checksum. Only `new` must match one note (§6.3); otherwise the call fails and nothing is written:
 
 | Case | Result |
 | :--- | :--- |
 | The old link is still there | Rewritten |
 | The old link is gone (someone already edited it) | Skipped, and reported as a warning |
+| A `notes` entry matches no note, or several | Skipped, and reported as a warning; for several, the warning lists their ids (§6.3) |
 
 ```
-relinked: 4
+relinked: 4 links in 3 notes
 warning: skipped, link already gone: recognitor/Sync design
 ```
 - **Links by name usually survive:** `[[Caching]]` keeps resolving after a move unless the name now matches two notes, so the list is usually short.
-- **Unchosen links** become ghosts and show up in `recognitor ghosts`.
+- **Links in unchosen notes** become ghosts and show up in `recognitor ghosts`.
 
 ### 6.2 Moves Outside Recognitor
 
