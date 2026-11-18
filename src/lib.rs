@@ -22,6 +22,7 @@ pub mod resolve;
 pub mod search;
 pub mod walk;
 mod write;
+pub mod write_note;
 
 pub use error::{Error, Result};
 pub use index::{Index, SweepOptions, SweepReport};

@@ -314,7 +314,7 @@ fn initialize_sends_the_instructions_word_for_word() {
 }
 
 #[test]
-fn tools_list_has_the_read_tools_and_relink() {
+fn tools_list_has_the_read_tools_and_the_write_tools() {
     let v = vault();
     let mut server = v.server();
     let list = server.list_tools();
@@ -332,6 +332,7 @@ fn tools_list_has_the_read_tools_and_relink() {
             "search",
             "context",
             "read_note",
+            "write_note",
             "relink"
         ]
     );
@@ -406,6 +407,167 @@ fn tool_descriptions_and_argument_descriptions_are_the_docs_text() {
         let doc_args: Vec<(&String, &str)> = expected.args.iter().map(|(k, v)| (k, v.as_str())).collect();
         assert_eq!(sent_args, doc_args, "{}", expected.name);
     }
+}
+
+// `write_note` (doc 07 §11): MCP only, the CLI has no write command (§12).
+
+#[test]
+fn write_note_creates_overwrites_and_refuses_over_mcp() {
+    let v = vault();
+    let mut server = v.server();
+    let list = server.list_tools();
+    let schema = list["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "write_note")
+        .unwrap()["inputSchema"]
+        .clone();
+    assert_eq!(schema["required"], json!(["path", "content"]));
+    assert_eq!(
+        schema["properties"].as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["path", "content", "expected_checksum"]
+    );
+    assert_eq!(server.err("write_note", json!({})), "write_note needs a path");
+    assert_eq!(
+        server.err("write_note", json!({"path": "ops/New"})),
+        "write_note needs content"
+    );
+    assert_eq!(
+        server.err("write_note", json!({"path": "ops/New", "content": "x", "page": 2})),
+        "unexpected argument: page"
+    );
+    assert_eq!(
+        server.err("write_note", json!({"path": "ops/New", "content": 7})),
+        "content needs text"
+    );
+    assert_eq!(
+        server.err(
+            "write_note",
+            json!({"path": "ops/New", "content": "  
+"})
+        ),
+        "write_note needs content"
+    );
+    assert_eq!(
+        server.err("write_note", json!({"path": "ops/New", "content": ""})),
+        "write_note needs content"
+    );
+    assert!(!v.root.join("ops/New.md").exists());
+
+    let note = "# Brand New
+
+A zebra note.
+";
+    let sum = recognitor::hash::sha256_prefix(note.as_bytes(), 12);
+    // Create: `Ops/` lands in the existing `ops/`.
+    assert_eq!(
+        server.ok("write_note", json!({"path": "Ops/Brand New.md", "content": note})),
+        format!(
+            "ops/Brand New  checksum: {sum}
+"
+        )
+    );
+    assert_eq!(fs::read_to_string(v.root.join("ops/Brand New.md")).unwrap(), note);
+    // The same call again is a create on an existing note: an error result with the note in it.
+    let refused = server.err(
+        "write_note",
+        json!({"path": "ops/Brand New", "content": "# Other
+"}),
+    );
+    assert!(refused.starts_with("The note already exists"), "{refused}");
+    assert!(
+        refused.contains(&format!(
+            "ops/Brand New  checksum: {sum}
+{note}"
+        )),
+        "{refused}"
+    );
+    // Readback and search over the same server see it at once.
+    assert!(
+        server
+            .ok("read_note", json!({"note": "ops/Brand New"}))
+            .starts_with(&format!(
+                "ops/Brand New  checksum: {sum}
+"
+            ))
+    );
+    assert!(
+        server
+            .ok("search", json!({"query": "zebra"}))
+            .starts_with("1. ops/Brand New")
+    );
+    // Overwrite with the checksum; a stale one is refused.
+    let newer = "# Brand New
+
+Now a giraffe note.
+";
+    let newer_sum = recognitor::hash::sha256_prefix(newer.as_bytes(), 12);
+    assert_eq!(
+        server.ok(
+            "write_note",
+            json!({"path": "ops/Brand New", "content": newer, "expected_checksum": sum})
+        ),
+        format!(
+            "ops/Brand New  checksum: {newer_sum}
+"
+        )
+    );
+    let stale = server.err(
+        "write_note",
+        json!({"path": "ops/Brand New", "content": "# X
+", "expected_checksum": sum}),
+    );
+    assert!(stale.starts_with("The note changed since that checksum"), "{stale}");
+    assert!(
+        stale.contains(&format!(
+            "ops/Brand New  checksum: {newer_sum}
+{newer}"
+        )),
+        "{stale}"
+    );
+    // Missing note with a checksum, the bootstrap notice, the archive.
+    assert_eq!(
+        server.err(
+            "write_note",
+            json!({"path": "ops/Nope", "content": "x", "expected_checksum": "000000000000"})
+        ),
+        "\"ops/Nope\" not found"
+    );
+    assert_eq!(
+        server.ok(
+            "write_note",
+            json!({"path": "bootstrap/Extra", "content": "# Extra
+"})
+        ),
+        format!(
+            "bootstrap/Extra  checksum: {}
+notice: bootstrap/Extra loads as instructions at session start
+",
+            recognitor::hash::sha256_prefix(
+                b"# Extra
+",
+                12
+            )
+        )
+    );
+    assert!(
+        server
+            .err(
+                "write_note",
+                json!({"path": "archive/2026-11-01 session", "content": "x", "expected_checksum": "000000000000"})
+            )
+            .starts_with("Archive notes are append only: write_note never overwrites one. To add to it, use edit_note with append.")
+    );
+    assert!(
+        server
+            .err("write_note", json!({"path": "top.md", "content": "x"}))
+            .contains("no top-level folder")
+    );
+    drop(server);
+    // The CLI has no write command (doc 07 §12): its text is a bad argument.
+    assert_eq!(v.cli(&["write_note", "ops/X", "x"]).status.code(), Some(2));
+    assert_eq!(v.cli(&["write", "ops/X", "x"]).status.code(), Some(2));
 }
 
 #[test]
@@ -836,7 +998,7 @@ fn a_vault_without_a_bootstrap_is_an_error_without_the_prefix() {
 fn an_unknown_tool_is_a_protocol_error() {
     let v = vault();
     let mut server = v.server();
-    let response = server.request_raw("tools/call", json!({"name": "write_note", "arguments": {}}));
+    let response = server.request_raw("tools/call", json!({"name": "edit_note", "arguments": {}}));
     // Doc 07 §2.1, "Unknown tool": a JSON-RPC error, -32602, and no tool result.
     assert_eq!(response["error"]["code"], json!(-32602), "{response}");
     assert!(response.get("result").is_none(), "{response}");

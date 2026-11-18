@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 use crate::bootstrap::DEFAULT_MAX_TOKENS as BOOTSTRAP_DEFAULT_MAX_TOKENS;
 use crate::config;
 use crate::read::DEFAULT_MAX_TOKENS as READ_DEFAULT_MAX_TOKENS;
+use crate::write_note::WriteNote;
 use crate::{Error, Index};
 
 /// The server's `instructions` (doc 07 §2.1, "Server instructions"), word for word.
@@ -48,8 +49,8 @@ pub struct Tool {
 
 const PAGE_NUMBER: &str = "the number from the \"page N\" line";
 
-/// The tools, in the order of doc 07 §2.1. `relink` is the only write tool so far.
-pub const TOOLS: [Tool; 6] = [
+/// The tools, in the order of doc 07 §2.1: `write_note` and `relink` are the write tools so far.
+pub const TOOLS: [Tool; 7] = [
     Tool {
         name: "load_bootstrap",
         description: "Load the user's standing instructions: who they are, how to answer, rules for every project. Call once at session start, unless a hook already added them.",
@@ -126,6 +127,30 @@ pub const TOOLS: [Tool; 6] = [
             Arg {
                 name: "query",
                 description: "words that choose which sections to keep when the note is cut",
+                kind: Kind::Text,
+                required: false,
+            },
+        ],
+    },
+    Tool {
+        name: "write_note",
+        description: "Create a note, or replace a whole note. Without `expected_checksum` it only creates; to replace a note, pass the checksum from `read_note`. To change part of a note, use `edit_note`.",
+        args: &[
+            Arg {
+                name: "path",
+                description: "from the vault root, `.md` optional",
+                kind: Kind::Text,
+                required: true,
+            },
+            Arg {
+                name: "content",
+                description: "the whole file, frontmatter included",
+                kind: Kind::Text,
+                required: true,
+            },
+            Arg {
+                name: "expected_checksum",
+                description: "the checksum of the version it replaces",
                 kind: Kind::Text,
                 required: false,
             },
@@ -266,6 +291,7 @@ fn missing_message(tool: &Tool, arg: &Arg) -> String {
     let what = match arg.name {
         "query" => "a query".to_string(),
         "note" => "a note".to_string(),
+        "path" => "a path".to_string(),
         other => other.to_string(),
     };
     format!("{} needs {what}", tool.name)
@@ -311,6 +337,21 @@ pub fn call(index: &mut Index, config_file: &Path, name: &str, arguments: &Map<S
                 let note = args.required_text("note")?;
                 let context = index.context(note, args.page()).map_err(failed)?;
                 Ok(crate::context::render(&context))
+            }
+            "write_note" => {
+                let path = args.required_text("path")?;
+                let content = args.required_text("content")?;
+                let max_tokens = config::read_max_tokens(config_file)
+                    .map_err(failed)?
+                    .unwrap_or(READ_DEFAULT_MAX_TOKENS);
+                let written = index
+                    .write_note(path, content, args.text("expected_checksum"), max_tokens)
+                    .map_err(failed)?;
+                match written {
+                    // Doc 07 §2.1: a refusal is an error, so it never passes for a success.
+                    WriteNote::Refused(text) => Err(text),
+                    done => Ok(crate::write_note::render(&done)),
+                }
             }
             "relink" => {
                 let old = args.required_text("old")?;

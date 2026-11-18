@@ -11,7 +11,8 @@ use crate::bootstrap::estimate_tokens;
 use crate::error::{Error, Result};
 use crate::hash::sha256_prefix;
 use crate::outline::{Outline, Section, outline};
-use crate::paths::{note_id, titled_id};
+use crate::parse::parse_note;
+use crate::paths::{file_stem, note_id, titled_id};
 use crate::resolve::{NoteLookup, find_note, several_text};
 use crate::search::{expression_of, query_parts};
 
@@ -101,6 +102,24 @@ pub fn read(
         None => Ok(ctx.note(&bytes, &outline)),
         Some(wanted) => ctx.section(&outline, wanted),
     }
+}
+
+/// A note read from the bytes of its file, with no index lookup: what a rejected write returns as the current version
+/// (doc 07 §5.3). The file may be one the index does not know yet, so the title comes from the text, as the indexer
+/// takes it (the first heading, else the filename). `rel` is the vault-relative path as named on disk.
+pub(crate) fn read_file(rel: &str, bytes: &[u8], max_tokens: usize) -> Read {
+    let id = note_id(rel).to_string();
+    let text = String::from_utf8_lossy(bytes).into_owned();
+    let stem = file_stem(&id).to_lowercase();
+    let title = parse_note(&text).title.filter(|t| t.to_lowercase() != stem);
+    let ctx = Ctx {
+        id,
+        title,
+        text: &text,
+        limit: max_tokens,
+        query: None,
+    };
+    ctx.note(bytes, &outline(&text))
 }
 
 struct Ctx<'a> {

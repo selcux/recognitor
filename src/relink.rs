@@ -18,7 +18,7 @@ use crate::paths::{
     ARCHIVE_NAMESPACE, BOOTSTRAP_NAMESPACE, file_stem, namespace_of_key, note_id, parent_dir, strip_md_ignore_case,
 };
 use crate::resolve::{Before, NoteLookup, find_note, link_key, name_is_unique, resolve, resolves_before, several_text};
-use crate::write::replace_file;
+use crate::write::{bootstrap_notice, replace_file};
 use crate::{Index, SweepOptions};
 
 /// What a `relink` call did.
@@ -71,7 +71,8 @@ pub fn render(r: &Relink) -> String {
                 s.push_str(&format!("warning: {w}\n"));
             }
             for id in &d.bootstrap {
-                s.push_str(&format!("notice: {id} loads as instructions at session start\n"));
+                s.push_str(&bootstrap_notice(id));
+                s.push('\n');
             }
             s
         }
