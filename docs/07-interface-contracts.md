@@ -29,7 +29,7 @@ A note's store comes from its namespace: `bootstrap`, `archive`, or any other na
 | Write tools | Allowed, with the bootstrap notice | Yes | Create and `append` only |
 
 - **Write tools:** `write_note`, `edit_note`, `move_note`, `relink`, `delete_note`.
-- **Bootstrap notice:** the tool result states that the note loads as instructions at session start ([04-information-stores-and-lifecycle.md §2.3](04-information-stores-and-lifecycle.md#23-writes)).
+- **Bootstrap notice:** the tool result states that the note loads as instructions at session start ([04-information-stores-and-lifecycle.md §2.3](04-information-stores-and-lifecycle.md#23-writes)); after `delete_note`, that it no longer does (§10).
 - **Archive is append only:** `write_note` without a checksum creates an archive note, and `edit_note` with `append` adds to one. Every other write to an archive note is refused. `relink` never reaches one, because archive notes have no edges ([04-information-stores-and-lifecycle.md §4](04-information-stores-and-lifecycle.md#4-archive-store)).
 - **A move checks both stores:** the one the note leaves and the one it enters. A move out of the archive is refused, because it changes an archive note. A move into the archive counts as a create, so a knowledge note can be archived by moving it. A move into or out of the bootstrap is allowed and carries the bootstrap notice.
 - **Explicit request:** doc 04 shows archive notes "only on explicit request". Passing `ns: "archive"` to `search` is one; reading a note that `context` marked `(archive)` is another, because a curated note linked to it.
@@ -72,6 +72,7 @@ A line ending in "page N" means more results exist.
 | `write_note` | Create a note, or replace a whole note. Without `expected_checksum` it only creates; to replace a note, pass the checksum from `read_note`. To change part of a note, use `edit_note`. | `path`: from the vault root, `.md` optional. `content`: the whole file, frontmatter included. `expected_checksum`: the checksum of the version it replaces |
 | `edit_note` | Change part of a note without rewriting it. `append` adds text at the end of a section, `add_observation` and `add_relation` add one line, `find_replace` replaces text that occurs exactly once, `replace_section` replaces a section and needs its checksum from `read_note`. | `note`: an id, path or name. `op`: one of the five. `text`: the text to add, the line, the replacement or the new section. `section`: heading text, for `append` and `replace_section`. `find`: the exact text to replace, for `find_replace`. `expected_checksum`: the section's checksum, for `replace_section` |
 | `relink` | Rewrite the links that pointed to a moved note, in the notes the user chose. A link that is already gone is skipped with a warning. | `old`: the note's id before the move. `new`: an id, path or name. `notes`: the linking notes, each an id, path or name |
+| `delete_note` | Move a note to the vault trash. Pass its checksum from `read_note`. Returns the links that now point nowhere; show them to the user, who decides whether to fix them. | `note`: an id, path or name. `expected_checksum`: the checksum of the version it deletes |
 
 - **Word for word:** the server sends this text exactly as written here. The retrieval benchmark ([02-open-questions-and-tradeoffs.md §11](02-open-questions-and-tradeoffs.md#11-target-scale--benchmark-resolved)) can change it, through this section.
 - **Write tools** get their lines here when they are built, under the same rules.
@@ -224,6 +225,9 @@ The rejection never repeats the agent's own request: the agent already has it in
 | Overwrite with a stale checksum | `The note changed since that checksum, so nothing was written. Current version:`, a line break, the note |
 | Create or move onto case twins | `Names that differ only in case cannot exist together, so nothing was written. On disk:`, then one path per line, indented two spaces, a folder ending in `/` |
 | `write_note` with a checksum on an archive note | `Archive notes are append only: write_note never overwrites one. To add to it, use edit_note with append.` |
+| `delete_note` on an archive note | `Archive notes are append only: delete_note never removes one. Only the user can delete the file.` |
+| `delete_note` on a note over the read limit (§10) | `The note is too long to read whole, so delete_note cannot check its checksum and nothing was deleted. Only the user can delete the file.` |
+| `delete_note` with a stale checksum | `The note changed since that checksum, so nothing was deleted. Current version:`, a line break, the note |
 | `find_replace`, `find` not in the note | `The text to replace was not found, so nothing was written. Current version:`, a line break, the note |
 | `find_replace`, `find` more than once (overlaps count) | `The text to replace occurs N times, so nothing was written; it must occur exactly once. Current version:`, a line break, the note |
 | `replace_section` with a stale checksum | `The section changed since that checksum, so nothing was written. Current version:`, a line break, the section as `read_note` shows it (§7.3) |
@@ -506,9 +510,27 @@ Every edit case maps to one op:
 
 - **Vault trash, not a hard delete:** the file moves to `.recognitor/trash/<timestamp>/<original path>`. A move inside the vault works the same on every platform and drive, and it cannot half-fail. The timestamp folder keeps two deletes of the same path apart and records when each happened.
 - **Never indexed:** `.recognitor/` is a hidden folder ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)).
+- **Timestamp:** UTC to the second, with dashes for colons: `2026-11-18T19-18-52Z`. Windows refuses `:` in a name, and the folders sort by time. A second delete of the same path in the same second gets `-2`, then `-3`.
+- **Folders stay:** a folder the delete leaves empty stays in place. Removing it would race with a human working in it, and git ignores empty folders anyway.
 - **Undo:** move the file back. `recognitor trash empty` clears the folder.
-- **Output:** the links that now point nowhere. They become ghosts, and the user decides whether to clean them up.
-- **Guard:** the whole-note checksum (§5.2).
+- **Output:** the note's id, its trash path, and the links the delete broke. They become ghosts, and the user decides whether to clean them up.
+
+```
+deleted: ideas/Caching
+trash: .recognitor/trash/2026-11-18T19-18-52Z/ideas/Caching.md
+broken links: 3 links in 2 notes
+- ideas/index: indexes Caching  (ambiguous)
+- ops/Runbook, titled "Runbook v2": links_to ideas::Caching
+- ops/Runbook, titled "Runbook v2": relates_to ../ideas/Caching
+```
+
+- **Broken means changed, as in §6.1:** a link that now reaches no note is listed as it is; a name that now matches several notes ends with `  (ambiguous)`; a link that now resolves to another note ends with `  (now <id>)`. A redirected link is listed because it still resolves, so `recognitor ghosts` never shows it.
+- **One line per link:** the linking note's id (with its title when it differs, as in §4.2), the predicate, and the target as written, the text a `find_replace` fix needs. The count line is worded as in `relink` (§6.1). With nothing broken it reads `broken links: none`.
+- **No cap:** every line is a decision for the user, and a cut would hide exactly those lines. Deleting a heavily linked hub gives a long result.
+- **Bootstrap notice:** last, as `notice: <id> no longer loads as instructions at session start` (§1.1).
+- **Guard:** the whole-note checksum (§5.2). `expected_checksum` is required: a missing or empty one gives `delete_note needs expected_checksum` (§2.1).
+- **A note over the read limit is refused:** a cut read shows no whole-note checksum (§7.2), so the agent cannot hold a valid one, and a stale-checksum rejection would return the cut note again in a loop. The refusal comes before the guard and sends the agent to the user instead. `move_note` meets the same limit and settles it in its own slice.
+- **Order of checks:** archive (§1.1), read limit, checksum. Refusal texts: §5.3.
 - **Stores:** §1.1.
 - **Rejected: the OS trash.** Windows skips the Recycle Bin on network drives, macOS asks permission to control Finder, and the Linux trash can fail on servers and other mounts.
 

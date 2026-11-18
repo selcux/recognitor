@@ -98,7 +98,7 @@ The bootstrap is loaded as a tree, starting from `index.md` and following links 
 
 Bootstrap notes are read as instructions in every future session, so writes to them carry more weight than knowledge writes (DR1-08):
 
-- When an MCP write or edit touches a note in the bootstrap, the tool result states that the note loads as instructions at session start ([07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access)).
+- When an MCP write or edit touches a note in the bootstrap, the tool result states that the note loads as instructions at session start, or after a delete that it no longer does ([07-interface-contracts.md §1.1](07-interface-contracts.md#11-store-access)).
 - A new bootstrap note loads only once a loaded note links to it, so an agent cannot add instructions without editing a note that already loads. That edit shows in the vault's git history.
 
 ---
