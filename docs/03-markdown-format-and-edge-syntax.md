@@ -84,7 +84,7 @@ Typed edges describe exact relationships between notes and exist only under the 
 ```
 
 - **Predicate:** a single token immediately preceding the wikilink target (e.g. `part_of`, `supersedes`, `depends_on`): letters, digits, and `_`. Multi-word predicates are not supported.
-- **Target:** a wikilink containing the target note's title, filename, or path. Optional cross-namespace references use the `namespace::note` prefix. Resolution rules are defined in §4.
+- **Target:** a wikilink containing the target note's title, filename, or path. A link to a note in another namespace declares that namespace with the `namespace::` prefix (§4, "Writing a link"). Resolution rules are defined in §4.
 - **Context:** an optional trailing `(text)` is stored in `edges.context`.
 - **Lines of other shapes:** a line under `## Relations` that does not match `- <predicate> [[Target]] (context)`, such as `- see also [[X]]` or `- [[X]]`, still indexes its links as generic `links_to` edges, and lint warns.
 - **Outside `## Relations`:** a bullet like `- Mother [[Alice]]` in the body is an inline mention (Tier 2). Because typed edges live only in their section, prose never needs an escape syntax to avoid becoming a typed edge.
@@ -165,25 +165,39 @@ Recognitor follows the Obsidian model: a note's address is its path ([07-interfa
 
 Wikilinks name a note by title (`[[ADHD profile]]`), by filename, by path, or with a namespace prefix (`[[cognition::index]]`). The engine resolves each one to a note id in this order. Matching uses lowercase keys (above), and a "name" is a note's title or its filename without `.md`.
 
-A link's **key** is the link lowercased, without its alias, heading or `.md`, with percent-encoding decoded (§3). A relative path becomes the full path from the vault root: `../guides/Setup.md` written in `common/notes/` becomes `common/guides/setup`. A path link, wikilink or Markdown, that lands in the vault root or outside the vault can never reach a note, so it is ignored: no edge and no ghost. The key is stored next to the link as written, and resolution reads only the key:
+A link's **key** is the link lowercased, without its alias, heading or `.md`, with percent-encoding decoded (§3). A relative path, wikilink or Markdown, becomes the full path from the vault root, marked with a leading `/`: `../guides/Setup.md` written in `common/notes/` becomes `/common/guides/setup`. The mark keeps it apart from a path from the namespace folder (step 1); it lives only in the index, never in a note. A path link, wikilink or Markdown, that lands in the vault root or outside the vault can never reach a note, so it is ignored: no edge and no ghost. The key is stored next to the link as written, and resolution reads only the key and the linking note's namespace:
 
-1. **Exact path:** `[[common/working-style/ADHD profile]]` matches a note id, with or without `.md`. Explicit relative paths (`[[./same.md]]`, `[[../guides/Setup.md]]`) resolve relative to the linking note, to that exact file only.
+1. **Exact path:** a link with a `/` names one file by its path, with or without `.md`. The path starts at a namespace folder: `[[design::b/Caching]]` is `design/b/Caching.md`, and `[[b/Caching]]` written in a `design` note is the same file. A path is never read from the vault root: `[[design/b/Caching]]` written in a `design` note looks for `design/design/b/Caching.md`. Explicit relative paths (`[[./same.md]]`, `[[../guides/Setup.md]]`) resolve relative to the linking note, to that exact file only. A path that matches no file goes on to the name steps, so a title with a `/` (`TCP/IP`) still resolves; a relative path does not.
 2. **Prefixed name:** `[[ns::Name]]` matches a name inside namespace `ns`.
 3. **Same-namespace name:** `[[Name]]` matches a name inside the source note's namespace.
 4. **Unique name:** `[[Name]]` matches a name that exists in exactly one namespace.
 5. **Ghost:** no match, or more than one match at the first step that finds any. The link is stored with `target_key = NULL`. An ambiguous link also raises a lint warning, because guessing would create a silently wrong edge. A link to a case twin is a plain ghost, because twins never enter the system ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)).
 
-Filename matching matters for Obsidian, which links by filename even when the frontmatter title differs.
+Filename matching lets a link name a note by its file even when the frontmatter title differs.
+
+### Writing a link
+
+Where the linking note and the target sit decides the form. Agents write links this way, and `relink` rewrites them this way ([07-interface-contracts.md §6.1](07-interface-contracts.md#61-moving-a-note)):
+
+| Target | In the linking note's namespace | In another namespace |
+| :--- | :--- | :--- |
+| Its name is unique in its namespace | `[[Name]]` | `[[ns::Name]]` |
+| Its name repeats in its namespace | `[[path/to/Name]]` | `[[ns::path/to/Name]]` |
+
+- **`ns::` marks a link out of the namespace:** a link to another namespace always has it, and a link inside the namespace never does.
+- **A path only when the name repeats,** and it starts at the namespace folder: `design/b/Caching.md` is `[[b/Caching]]` inside `design` and `[[design::b/Caching]]` from anywhere else.
+- **Name:** the title or the filename, whichever the writer uses; either works while it is unique.
+- **Still read, never written:** a link to another namespace without the prefix, resolved by step 4. `lint` warns about it.
+- **No form:** a note directly in its namespace folder whose name repeats in that namespace (`recognitor/index` next to `recognitor/sub/index`) has no link that names it alone. A link to it is a ghost, ambiguous when its name matches several notes. Renaming one of the notes fixes it.
 
 ### Re-resolution and ghosts
 
 - **Both forms are kept:** `edges.target_ref` stores the link exactly as written, for output. `edges.ref_key` stores its key, so the link can be resolved again without reading the file.
 - **A saved note's own links** are resolved when it is saved.
-- **Ghosts heal:** after a note is added, removed, renamed or retitled, the engine re-resolves the links whose key matches one of that note's names, old and new: its id, its title and its filename, the last two also with the namespace prefix (`ns::name`). Each lookup uses an index, so a write never re-checks every link in the vault. A link written before its target existed resolves once the target is created, wherever it lands (`backend/specs/security-architecture`, not only a guessed `backend/security-architecture`).
+- **Ghosts heal:** after a note is added, removed, renamed or retitled, the engine re-resolves the links whose key matches one of that note's names, old and new: its id, its title and its filename, the last two also with the namespace prefix (`ns::name`), and its path inside the namespace, bare and with the prefix (`b/caching`, `design::b/caching`). Each lookup uses an index, so a write never re-checks every link in the vault. A link written before its target existed resolves once the target is created, wherever it lands (`backend/specs/security-architecture`, not only a guessed `backend/security-architecture`).
 - **Deletes revert to ghosts:** links to a deleted note return to `target_key = NULL` and show up in the ghost backlog.
 - **Title renames:** links that use the old title become ghosts and show up in the ghost backlog, unless the filename still matches.
-- **File moves:** a move breaks path links (`[[ideas/caching]]`) and, across namespaces, prefixed links (`[[ideas::Caching]]`) to the moved note, and relative links inside it. A name link keeps resolving through steps 3 and 4, unless the move makes the name ambiguous. `move_note` reports every link it broke ([07-interface-contracts.md §6.1](07-interface-contracts.md#61-moving-a-note)). A move made outside Recognitor leaves ghosts, and `recognitor ghosts` suggests where the note went ([07-interface-contracts.md §6.2](07-interface-contracts.md#62-moves-outside-recognitor)).
-- **Obsidian:** Obsidian does not understand `[[ns::Title]]` and shows it as an unresolved link. The syntax stays because existing notes use it.
+- **File moves:** a move breaks path links (`[[b/caching]]`, `[[ideas::b/caching]]`) and, across namespaces, prefixed links (`[[ideas::Caching]]`) to the moved note, and relative links inside it. A name link keeps resolving through steps 3 and 4, unless the move makes the name ambiguous. `move_note` reports every link it broke ([07-interface-contracts.md §6.1](07-interface-contracts.md#61-moving-a-note)). A move made outside Recognitor leaves ghosts, and `recognitor ghosts` suggests where the note went ([07-interface-contracts.md §6.2](07-interface-contracts.md#62-moves-outside-recognitor)).
 
 ---
 

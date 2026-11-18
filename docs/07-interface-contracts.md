@@ -69,6 +69,7 @@ A line ending in "page N" means more results exist.
 | `search` | Full-text search. Returns ids, summaries and matching facts, 5 per page. Notes with every word come first; when fewer than 5 do, notes with only some of the words fill the first page. No operators. `ns` ranks that namespace first without filtering; `ns: "archive"` also searches session records. | `query`: plain words. `ns`: from `load_namespace`. `page`: the number from the "page N" line |
 | `context` | Show a note's links out and in, each with its summary, without reading the neighbors. Use it to pick what to read next. | `note`: an id, path or name. `page`: the number from the "page N" line |
 | `read_note` | Return a note's full text with its checksum. `section` returns one section. A note over the token limit is cut to its best sections; the closing line says how to read the rest. | `note`: an id, path or name. `section`: heading text as written. `query`: words that choose which sections to keep when the note is cut |
+| `relink` | Rewrite the links that pointed to a moved note, in the notes the user chose. A link that is already gone is skipped with a warning. | `old`: the note's id before the move. `new`: an id, path or name. `notes`: the linking notes, each an id, path or name |
 
 - **Word for word:** the server sends this text exactly as written here. The retrieval benchmark ([02-open-questions-and-tradeoffs.md §11](02-open-questions-and-tradeoffs.md#11-target-scale--benchmark-resolved)) can change it, through this section.
 - **Write tools** get their lines here when they are built, under the same rules.
@@ -217,7 +218,7 @@ The rejection never repeats the agent's own request: the agent already has it in
 
 Recognitor follows the Obsidian model: a note's address is its path. It replaced the earlier permalink identity on 2026-11-15; resolution rules are in [03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution).
 
-- **Id = path:** a note's id is its path from the vault root without `.md` (`common/working-style/ADHD profile`). Output always shows it as written. The database stores its lowercase **key** instead ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)), and no output shows the key. Both come from the path, never from frontmatter, with no slug conversion, so nothing can drift, and Obsidian path links match without conversion.
+- **Id = path:** a note's id is its path from the vault root without `.md` (`common/working-style/ADHD profile`). Output always shows it as written. The database stores its lowercase **key** instead ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)), and no output shows the key. Both come from the path, never from frontmatter, with no slug conversion, so nothing can drift.
 - **Kept as written, matched in lowercase:** links, tool arguments and namespaces match a lowercase key of the path ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)).
 - **ASCII names only:** every note and folder name is ASCII, so a key means the same on every platform. Other files (images, PDFs) are never indexed, so their names are not checked. A non-ASCII name is handled like a case twin in the table below.
 - **No case twins:** two paths with the same key are an error at any level, folders included (`common/ADHD profile.md` and `common/adhd profile.md`; `Baseline/` and `baseline/`). The same name in different folders is fine (every namespace has an `index.md`).
@@ -256,29 +257,37 @@ An MCP tool cannot pause mid-call to ask the user, so a move takes two calls:
 
 **Which links `relink` rewrites:** in each chosen note, the links that pointed to the note at `old`. A link qualifies when it resolves to the note as if the note still were at `old`, and does not resolve to `new` now. A key match alone is not enough: in `ops/Runbook`, `[[Caching]]` can point to `ops/Caching` while `[[ideas::Caching]]` points to the moved note.
 
-**The new link follows the link rules** ([03-markdown-format-and-edge-syntax.md §3 and §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)): wherever the note moved, the link is set to reach it from the linking note. It keeps its form; the alias, `#heading`, `!` and a written `.md` stay, and so does the name as written (title or filename). A `ns::` prefix marks a link between namespaces, so it appears exactly when the target is in another namespace:
+**The new link is written by the link rules** ([03-markdown-format-and-edge-syntax.md §4, "Writing a link"](03-markdown-format-and-edge-syntax.md#writing-a-link)): wherever the note moved, the link is set to reach it from the linking note. A wikilink, name or path, takes the form that table gives; the alias, `#heading`, `!` and a written `.md` stay. The name follows the file: a name that still names the note (its title, or its filename after the move) stays as written, and any other name becomes the note's new filename.
 
-| Old link | New link, after `ideas/Caching` moves to `design/Caching` |
+| Old wikilink (name, prefixed or path) | New link, after `ideas/Caching` moves to `design/b/Caching` |
 | :--- | :--- |
-| Path: `[[ideas/Caching]]` | `[[design/Caching]]` |
-| Prefixed or name, linking note outside `design` | `[[design::Caching]]` |
-| Prefixed or name, linking note inside `design` | `[[Caching]]` |
-| Relative: `[[../ideas/Caching]]`, `[text](../ideas/Caching.md)` | The relative path from the linking note to the new file; percent-encoded in a Markdown link |
+| Linking note outside `design`, `Caching` unique in `design` | `[[design::Caching]]` |
+| Linking note inside `design`, `Caching` unique in `design` | `[[Caching]]` |
+| Linking note outside `design`, `design/a/Caching` also exists | `[[design::b/Caching]]` |
+| Linking note inside `design`, `design/a/Caching` also exists | `[[b/Caching]]` |
 
-- **Fallback:** when that link would not reach `new` alone (two `Caching` notes in different folders of `design`), the path form is written instead.
+- **Relative links keep their form:** `[[../ideas/Caching]]` and `[text](../ideas/Caching.md)` get the relative path from the linking note to the new file, percent-encoded in a Markdown link. A Markdown link that starts with `/` keeps its path from the vault root.
+- **Moved and renamed:** after `cognition/index` moves to `recognitor/cognition-index`, `[[Index]]` in `cognition/hubs/Storage` becomes `[[recognitor::cognition-index]]`, and `[[cognition::index]]` in `recognitor/index` becomes `[[cognition-index]]`.
+- **No form, no rewrite:** when the note now sits directly in its namespace folder and its name repeats in that namespace, no link names it alone ([03-markdown-format-and-edge-syntax.md §4, "Writing a link"](03-markdown-format-and-edge-syntax.md#writing-a-link)). `relink` leaves the link as written and warns once per linking note: `warning: skipped, no unambiguous link to design/Caching: ops/Runbook`.
 
-**`relink` never rejects.** Each linking note is handled on its own. Rewriting a link replaces only the link text, so it cannot overwrite anyone's work and needs no checksum. Only `new` must match one note (§6.3); otherwise the call fails and nothing is written:
+**`relink` never rejects.** Each linking note is handled on its own. Rewriting a link replaces only the link text, so it cannot overwrite anyone's work and needs no checksum. Only `new` must match one note, and `old` must be an id with its folder; otherwise nothing is written. No match for `new` and a bad `old` are errors; several matches for `new` return their ids (§6.3):
 
 | Case | Result |
 | :--- | :--- |
 | The old link is still there | Rewritten |
 | The old link is gone (someone already edited it) | Skipped, and reported as a warning |
 | A `notes` entry matches no note, or several | Skipped, and reported as a warning; for several, the warning lists their ids (§6.3) |
+| An archive note, a file that cannot be read, is not UTF-8 or cannot be replaced | Skipped, and reported as a warning |
+| No link names the moved note alone (no form, above) | That link is left as written, and reported as a warning |
+| A link whose target is not written inside it (a reference-style Markdown link) | Skipped, and reported as a warning naming the link |
 
 ```
 relinked: 4 links in 3 notes
 warning: skipped, link already gone: recognitor/Sync design
+notice: bootstrap/Profile loads as instructions at session start
 ```
+
+- **Bootstrap notice:** one `notice:` line per bootstrap note written (§1.1).
 - **Links by name usually survive:** `[[Caching]]` keeps resolving after a move unless the name now matches two notes, so the list is usually short.
 - **Links in unchosen notes** become ghosts and show up in `recognitor ghosts`.
 
@@ -500,7 +509,7 @@ The CLI has no `write`, `edit` or `delete` commands. A human edits notes in an e
 | `ghosts`, `lint [--strict]`, `trash empty` | Maintenance |
 | `sync`, `rebuild`, `config get/set` | Engine control |
 
-- **Same arguments as MCP:** a CLI command takes its MCP tool's arguments by the same names. The first required argument is positional, and every optional one is an option with its name: `search <query> --ns <name> --page <n>`, `context <note> --page <n>`, `read <note> --section <heading> --query <text>`.
+- **Same arguments as MCP:** a CLI command takes its MCP tool's arguments by the same names. The first required argument is positional, and every optional one is an option with its name: `search <query> --ns <name> --page <n>`, `context <note> --page <n>`, `read <note> --section <heading> --query <text>`. A tool with several required arguments takes them all as positionals, in order, a list last: `relink <old> <new> <note>...`.
 - **Which vault:** the `--vault <path>` flag, else the `RECOGNITOR_VAULT` environment variable, else `vault.path` in the config file. With none of them set, the command fails with an error that names all three. Sessions, hooks and the MCP server start in code repos, not in the vault, so the vault is never guessed from the current folder. The MCP server finds its vault the same way.
 - **Config file:** `config.toml` in the per-user local config folder, `ProjectDirs::config_local_dir()` from the `directories` crate (Windows: `%LOCALAPPDATA%\recognitor\config\config.toml`). Local, not roaming, because a vault path belongs to one machine. The `RECOGNITOR_CONFIG` environment variable points at another config file, for tests and portable setups. `config get/set` reads and writes it and keeps comments and unknown keys; keys follow the `section.name` style ([05-database-schema-specification.md §5](05-database-schema-specification.md#5-database-file-location)).
 

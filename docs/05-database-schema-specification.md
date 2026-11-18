@@ -62,7 +62,7 @@ CREATE TABLE edges (
     source_key TEXT NOT NULL REFERENCES notes(key) ON DELETE CASCADE,
     predicate TEXT NOT NULL,                   -- e.g. "part_of", "has_part", "supersedes", "relates_to", "links_to"
     target_ref TEXT NOT NULL,                  -- Link exactly as written: "Security Architecture", "cognition::index", "../ops/Deploy%20Checklist.md"; output shows it for ghosts
-    ref_key TEXT NOT NULL,                     -- The link's key for matching (doc 03 §4): "security architecture", "cognition::index", "backend/ops/deploy checklist"
+    ref_key TEXT NOT NULL,                     -- The link's key for matching (doc 03 §4): "security architecture", "cognition::index", "b/caching", "/backend/ops/deploy checklist" (relative and Markdown links: from the vault root, marked "/")
     target_key TEXT,                           -- Resolved note key; NULL = ghost note
     is_inline INTEGER NOT NULL DEFAULT 0,      -- 0: explicit relation from ## Relations, 1: inline link
     position INTEGER NOT NULL,                 -- Source line of the link; keeps the written order for load_bootstrap()
