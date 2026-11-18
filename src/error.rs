@@ -43,6 +43,13 @@ pub enum Error {
     NoCacheDir,
     /// The database file is not a Recognitor database. Nothing was changed.
     ForeignDatabase(PathBuf),
+    /// `load_namespace("bootstrap")` (doc 07 §1.1): the bootstrap loads with `load_bootstrap`.
+    BootstrapNotANamespace,
+    /// `load_namespace` of a namespace with no note in the index (doc 07 §3, "No such namespace"). Holds the name as
+    /// given and the namespaces that exist, as their folders are spelled, sorted by name ignoring case.
+    NoNamespace { name: String, namespaces: Vec<String> },
+    /// The MCP server could not start or lost its transport. Holds the SDK's message.
+    Mcp(String),
     /// The database belongs to another vault (doc 05 §5: one database per vault). Nothing was changed.
     VaultMismatch {
         db: PathBuf,
@@ -107,6 +114,20 @@ impl fmt::Display for Error {
                     write!(f, "No section \"{name}\" in {note}. Sections: {}.", listed.join(", "))
                 }
             }
+            // Doc 07 §3, "`bootstrap` is refused".
+            Error::BootstrapNotANamespace => write!(
+                f,
+                "bootstrap is not loaded with load_namespace: call load_bootstrap for the standing instructions"
+            ),
+            Error::NoNamespace { name, namespaces } => {
+                write!(f, "No namespace \"{name}\".")?;
+                if !namespaces.is_empty() {
+                    let listed: Vec<String> = namespaces.iter().map(|n| format!("\"{n}\"")).collect();
+                    write!(f, " Namespaces: {}.", listed.join(", "))?;
+                }
+                Ok(())
+            }
+            Error::Mcp(msg) => write!(f, "mcp: {msg}"),
             Error::NoCacheDir => write!(f, "no per-user cache directory found; set RECOGNITOR_DB"),
             Error::ForeignDatabase(db) => write!(
                 f,
@@ -132,6 +153,9 @@ impl std::error::Error for Error {
             | Error::NoteNotFound(_)
             | Error::NoSection { .. }
             | Error::NoBootstrap
+            | Error::Mcp(_)
+            | Error::BootstrapNotANamespace
+            | Error::NoNamespace { .. }
             | Error::NoCacheDir
             | Error::NoConfigDir
             | Error::NoVault { .. }

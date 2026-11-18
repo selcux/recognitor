@@ -18,9 +18,12 @@ path = "src/main.rs"
 directories = "6.0.0"
 pulldown-cmark = { version = "0.13.6", default-features = false }
 rayon = "1.12.0"
+rmcp = { version = "3.11.0", default-features = false, features = ["server", "transport-io"] }
 rusqlite = { version = "0.43", features = ["bundled"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
 sha2 = "0.11.1"
+tokio = { version = "1.54.1", features = ["rt"] }
 toml_edit = "0.25.19"
 
 [lints.rust]

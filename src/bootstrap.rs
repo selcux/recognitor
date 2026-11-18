@@ -220,10 +220,7 @@ fn read_note(conn: &Connection, key: &str) -> Result<Option<LoadedNote>> {
 /// code block stays. A relations section runs from its heading line to the next H1 or H2 line, or the end of the
 /// file (doc 04 §2.2 step 5).
 pub fn body_of(content: &str) -> String {
-    let full = content.strip_prefix('\u{feff}').unwrap_or(content);
-    // Frontmatter is the metadata block at the very start of the file, and nothing else (doc 03 §2). The rest is
-    // parsed on its own, so no offset has to skip it.
-    let text = &full[frontmatter_block(full).map_or(0, |(range, _)| range.end)..];
+    let text = without_frontmatter(content);
     let line_start = |offset: usize| text[..offset].rfind('\n').map_or(0, |i| i + 1);
     let mut cuts: Vec<Range<usize>> = Vec::new();
     let mut relations_from: Option<usize> = None;
@@ -268,17 +265,29 @@ pub fn body_of(content: &str) -> String {
     if pos < text.len() {
         out.push_str(&text[pos..]);
     }
-    // Start at the first line that has a character other than whitespace.
-    let mut first = out.len();
+    trim_blank_edges(&out).to_string()
+}
+
+/// The file's text after its frontmatter (and a byte order mark): the metadata block at the very start of the
+/// file, and nothing else (doc 03 §2).
+pub(crate) fn without_frontmatter(content: &str) -> &str {
+    let full = content.strip_prefix('\u{feff}').unwrap_or(content);
+    &full[frontmatter_block(full).map_or(0, |(range, _)| range.end)..]
+}
+
+/// The text from its first line that has a character other than whitespace, without trailing whitespace: blank
+/// lines before the first line and after the last are dropped, so notes join with one blank line.
+pub(crate) fn trim_blank_edges(text: &str) -> &str {
+    let mut first = text.len();
     let mut at = 0;
-    for line in out.split_inclusive('\n') {
+    for line in text.split_inclusive('\n') {
         if !line.trim().is_empty() {
             first = at;
             break;
         }
         at += line.len();
     }
-    out[first..].trim_end().to_string()
+    text[first..].trim_end()
 }
 
 impl Bootstrap {

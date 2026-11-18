@@ -10,6 +10,8 @@ pub mod db;
 pub mod error;
 pub mod hash;
 pub mod index;
+pub mod mcp;
+pub mod namespace;
 pub mod outline;
 pub mod parse;
 pub mod paths;

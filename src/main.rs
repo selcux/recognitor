@@ -17,6 +17,7 @@ const USAGE: &str = "usage: recognitor <command> [--vault <path>] [--report]
        recognitor context <note> [--vault <path>] [--page <n>]
        recognitor read <note> [--section <heading>] [--query <text>] [--vault <path>]
        recognitor bootstrap [--list] [--vault <path>]
+       recognitor mcp [--vault <path>]
        recognitor config get <key>
        recognitor config set <key> <value>
 
@@ -27,6 +28,7 @@ commands:
   context <note>            the links around one note: an id, a path or a link name
   read <note>               one note under a header line with its checksum; --section reads one part, a long note is cut
   bootstrap                 print the bootstrap payload (the notes linked from bootstrap/index.md)
+  mcp                       serve the read tools over MCP on stdio (one server per client session)
   config get <key>          print a config value
   config set <key> <value>  set a config value
 
@@ -69,6 +71,7 @@ enum Command {
     Bootstrap {
         list: bool,
     },
+    Mcp,
     Config(ConfigCommand),
 }
 
@@ -140,12 +143,13 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             query,
         },
         ("bootstrap", []) => Command::Bootstrap { list },
+        ("mcp", []) => Command::Mcp,
         ("config", [sub, key]) if sub == "get" => Command::Config(ConfigCommand::Get(key.clone())),
         ("config", [sub, key, value]) if sub == "set" => {
             Command::Config(ConfigCommand::Set(key.clone(), value.clone()))
         }
         ("config", _) => return Err("usage: config get <key> | config set <key> <value>".to_string()),
-        ("sync" | "rebuild" | "search" | "context" | "read" | "bootstrap", [extra, ..]) => {
+        ("sync" | "rebuild" | "search" | "context" | "read" | "bootstrap" | "mcp", [extra, ..]) => {
             return Err(format!("unexpected argument: {extra}"));
         }
         (other, _) => return Err(format!("unknown command: {other}")),
@@ -182,6 +186,7 @@ fn run(args: &Args) -> recognitor::Result<String> {
     let opts = SweepOptions { report: args.report };
     let command = match &args.command {
         Command::Config(cmd) => return run_config(cmd),
+        Command::Mcp => return run_mcp(args),
         other => other,
     };
     let config_file = config::config_path()?;
@@ -215,7 +220,19 @@ fn run(args: &Args) -> recognitor::Result<String> {
             Ok(bootstrap.render(max_tokens))
         }
         Command::Config(cmd) => run_config(cmd),
+        Command::Mcp => run_mcp(args),
     }
+}
+
+/// `recognitor mcp`: finds the vault and the database like every command, then serves until stdin closes (doc 07 §1,
+/// §12). Nothing goes to stdout but protocol messages; the text of an error goes to stderr in `main`.
+fn run_mcp(args: &Args) -> recognitor::Result<String> {
+    let config_file = config::config_path()?;
+    let vault = config::resolve_vault(args.vault.clone(), std::env::var_os(VAULT_ENV), &config_file)?;
+    let db = config::resolve_db(std::env::var_os(DB_ENV), &config_file)?;
+    let index = Index::open(&vault, db.as_deref())?;
+    recognitor::mcp::serve_stdio(index, config_file)?;
+    Ok(String::new())
 }
 
 fn main() -> ExitCode {
