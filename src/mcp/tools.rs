@@ -1,4 +1,4 @@
-//! The five read tools of the MCP server (doc 07 §2.1, §3): their text, their schemas and their dispatch.
+//! The tools of the MCP server (doc 07 §2.1, §3, §6.1): their text, their schemas and their dispatch.
 //!
 //! Nothing here knows about the transport. [`call`] takes a tool name and the raw JSON arguments and returns the text
 //! a client shows, with the error flag (doc 07 §2.1, "Errors"). Rendering is the library's own: a tool returns what
@@ -25,6 +25,8 @@ pub enum Kind {
     Text,
     /// A whole number from 1.
     Page,
+    /// A list of text values.
+    TextList,
 }
 
 /// One argument of a tool (doc 07 §2.1, "Tools", column "Arguments").
@@ -46,8 +48,8 @@ pub struct Tool {
 
 const PAGE_NUMBER: &str = "the number from the \"page N\" line";
 
-/// The tools, in the order of doc 07 §2.1. No write tool is here: shadow mode never opens a vault file for writing.
-pub const TOOLS: [Tool; 5] = [
+/// The tools, in the order of doc 07 §2.1. `relink` is the only write tool so far.
+pub const TOOLS: [Tool; 6] = [
     Tool {
         name: "load_bootstrap",
         description: "Load the user's standing instructions: who they are, how to answer, rules for every project. Call once at session start, unless a hook already added them.",
@@ -129,6 +131,30 @@ pub const TOOLS: [Tool; 5] = [
             },
         ],
     },
+    Tool {
+        name: "relink",
+        description: "Rewrite the links that pointed to a moved note, in the notes the user chose. A link that is already gone is skipped with a warning.",
+        args: &[
+            Arg {
+                name: "old",
+                description: "the note's id before the move",
+                kind: Kind::Text,
+                required: true,
+            },
+            Arg {
+                name: "new",
+                description: "an id, path or name",
+                kind: Kind::Text,
+                required: true,
+            },
+            Arg {
+                name: "notes",
+                description: "the linking notes, each an id, path or name",
+                kind: Kind::TextList,
+                required: true,
+            },
+        ],
+    },
 ];
 
 impl Tool {
@@ -136,14 +162,14 @@ impl Tool {
     pub fn input_schema(&self) -> Map<String, Value> {
         let mut properties = Map::new();
         for arg in self.args {
-            let kind = match arg.kind {
-                Kind::Text => "string",
-                Kind::Page => "integer",
+            let property = match arg.kind {
+                Kind::Text => json!({ "type": "string", "description": arg.description }),
+                Kind::Page => json!({ "type": "integer", "description": arg.description }),
+                Kind::TextList => {
+                    json!({ "type": "array", "items": { "type": "string" }, "description": arg.description })
+                }
             };
-            properties.insert(
-                arg.name.to_string(),
-                json!({ "type": kind, "description": arg.description }),
-            );
+            properties.insert(arg.name.to_string(), property);
         }
         let required: Vec<&str> = self.args.iter().filter(|a| a.required).map(|a| a.name).collect();
         let mut schema = Map::new();
@@ -196,6 +222,7 @@ impl<'a> Args<'a> {
                 None | Some(Value::Null) => {}
                 Some(Value::String(_)) if arg.kind == Kind::Text => {}
                 Some(Value::Number(n)) if arg.kind == Kind::Page && n.as_u64().is_some_and(|p| p >= 1) => {}
+                Some(Value::Array(items)) if arg.kind == Kind::TextList && items.iter().all(Value::is_string) => {}
                 Some(_) => return Err(wrong_type_message(arg)),
             }
         }
@@ -211,6 +238,15 @@ impl<'a> Args<'a> {
         let arg = self.tool.args.iter().find(|a| a.name == name);
         self.text(name)
             .ok_or_else(|| arg.map_or_else(|| format!("{name} is missing"), |a| missing_message(self.tool, a)))
+    }
+
+    /// A list argument's values; empty when it is not given. `check` has made sure each one is text.
+    fn text_list(&self, name: &str) -> Vec<String> {
+        self.given
+            .get(name)
+            .and_then(Value::as_array)
+            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default()
     }
 
     /// The page, from 1; 1 when it is not given.
@@ -239,6 +275,7 @@ fn wrong_type_message(arg: &Arg) -> String {
     match arg.kind {
         Kind::Page => format!("{} needs a number from 1", arg.name),
         Kind::Text => format!("{} needs text", arg.name),
+        Kind::TextList => format!("{} needs a list of text", arg.name),
     }
 }
 
@@ -274,6 +311,12 @@ pub fn call(index: &mut Index, config_file: &Path, name: &str, arguments: &Map<S
                 let note = args.required_text("note")?;
                 let context = index.context(note, args.page()).map_err(failed)?;
                 Ok(crate::context::render(&context))
+            }
+            "relink" => {
+                let old = args.required_text("old")?;
+                let new = args.required_text("new")?;
+                let relinked = index.relink(old, new, &args.text_list("notes")).map_err(failed)?;
+                Ok(crate::relink::render(&relinked))
             }
             _ => {
                 let note = args.required_text("note")?;

@@ -265,9 +265,9 @@ fn doc_args(cell: &str) -> Vec<(String, String)> {
 
 // The fixture vault.
 
-const INDEX_BACKEND: &str = "---\nsummary: Entry point for backend notes.\n---\n# Backend\n\nStart here.\n\n## Relations\n- indexes [[backend/Auth Flow]]\n";
-const AUTH_FLOW: &str = "# Auth Flow\n\nHow sessions are issued and checked.\n\n## Observations\n- [decision] Sessions expire after one hour #security\n\n## Relations\n- relates_to [[backend/Release]]\n";
-const RELEASE: &str = "# Release\n\nShips on Fridays.\n\n## Relations\n- part_of [[backend/index]]\n";
+const INDEX_BACKEND: &str = "---\nsummary: Entry point for backend notes.\n---\n# Backend\n\nStart here.\n\n## Relations\n- indexes [[Auth Flow]]\n";
+const AUTH_FLOW: &str = "# Auth Flow\n\nHow sessions are issued and checked.\n\n## Observations\n- [decision] Sessions expire after one hour #security\n\n## Relations\n- relates_to [[Release]]\n";
+const RELEASE: &str = "# Release\n\nShips on Fridays.\n\n## Relations\n- part_of [[index]]\n";
 const CACHING: &str = "# Caching\n\nA cache keeps answers close.\n";
 const LONG: &str = "# Long\n\nSummary line.\n\n## Storage\nStorage text.\n\n## Notes\nSome notes.\n";
 const BOOT_INDEX: &str = "# Bootstrap\n\nStanding instructions.\n\n## Relations\n- indexes [[Profile]]\n";
@@ -287,7 +287,7 @@ fn vault() -> TestVault {
         ("cog/Index.md", "# Cog\n\nThe cog entry note.\n"),
         (
             "meta/index.md",
-            "---\ntitle: Meta hub\n---\n\nPlain text first.\n\n## Relations\n- indexes [[backend/Release]]\n",
+            "---\ntitle: Meta hub\n---\n\nPlain text first.\n\n## Relations\n- indexes [[backend::Release]]\n",
         ),
         ("Mixed/index.md", "# Mixed\n\nMixed case folder.\n"),
         ("Shelf/Item.md", "# Item\n\nAn item.\n"),
@@ -314,7 +314,7 @@ fn initialize_sends_the_instructions_word_for_word() {
 }
 
 #[test]
-fn tools_list_has_the_five_read_tools_and_no_write_tool() {
+fn tools_list_has_the_read_tools_and_relink() {
     let v = vault();
     let mut server = v.server();
     let list = server.list_tools();
@@ -326,8 +326,63 @@ fn tools_list_has_the_five_read_tools_and_no_write_tool() {
         .collect();
     assert_eq!(
         names,
-        ["load_bootstrap", "load_namespace", "search", "context", "read_note"]
+        [
+            "load_bootstrap",
+            "load_namespace",
+            "search",
+            "context",
+            "read_note",
+            "relink"
+        ]
     );
+}
+
+// `relink` (doc 07 §6.1): the tool and its CLI twin return the same text.
+
+#[test]
+fn relink_rewrites_over_mcp_and_checks_its_arguments() {
+    let v = TestVault::new(&[
+        ("design/Caching.md", CACHING),
+        ("ops/Runbook.md", "# Runbook\n\nSee [[ideas::Caching]].\n"),
+    ]);
+    let mut server = v.server();
+    let list = server.list_tools();
+    let schema = list["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "relink")
+        .unwrap()["inputSchema"]
+        .clone();
+    assert_eq!(schema["required"], json!(["old", "new", "notes"]));
+    assert_eq!(schema["properties"]["notes"]["type"], "array");
+    assert_eq!(schema["properties"]["notes"]["items"]["type"], "string");
+    assert_eq!(server.err("relink", json!({})), "relink needs old");
+    assert_eq!(
+        server.err(
+            "relink",
+            json!({"old": "ideas/Caching", "new": "design/Caching", "notes": "ops/Runbook"})
+        ),
+        "notes needs a list of text"
+    );
+    assert_eq!(
+        server.ok(
+            "relink",
+            json!({"old": "ideas/Caching", "new": "design/Caching", "notes": ["ops/Runbook"]})
+        ),
+        "relinked: 1 link in 1 note\n"
+    );
+    assert_eq!(
+        fs::read_to_string(v.root.join("ops/Runbook.md")).unwrap(),
+        "# Runbook\n\nSee [[design::Caching]].\n"
+    );
+    drop(server);
+    assert_eq!(
+        v.cli_text(&["relink", "ideas/Caching", "design/Caching", "ops/Runbook"]),
+        "relinked: 0 links in 0 notes\nwarning: skipped, link already gone: ops/Runbook\n"
+    );
+    let usage = v.cli(&["relink", "ideas/Caching", "design/Caching"]);
+    assert_eq!(usage.status.code(), Some(2));
 }
 
 #[test]
@@ -506,12 +561,12 @@ fn load_namespace_keeps_relations_strips_frontmatter_and_adds_the_title_heading(
     // The note has a level-1 heading: nothing is added, `## Relations` stays, the frontmatter goes.
     assert_eq!(
         server.ok("load_namespace", json!({"ns": "backend"})),
-        "# Backend\n\nStart here.\n\n## Relations\n- indexes [[backend/Auth Flow]]\n\nPass ns: \"backend\" to search.\n"
+        "# Backend\n\nStart here.\n\n## Relations\n- indexes [[Auth Flow]]\n\nPass ns: \"backend\" to search.\n"
     );
     // No level-1 heading: `# <title>` is added above the content.
     assert_eq!(
         server.ok("load_namespace", json!({"ns": "meta"})),
-        "# Meta hub\n\nPlain text first.\n\n## Relations\n- indexes [[backend/Release]]\n\nPass ns: \"meta\" to search.\n"
+        "# Meta hub\n\nPlain text first.\n\n## Relations\n- indexes [[backend::Release]]\n\nPass ns: \"meta\" to search.\n"
     );
 }
 

@@ -127,6 +127,9 @@ pub struct Link {
     pub relation: Option<Relation>,
     /// 1-based line of the link in the file.
     pub line: u32,
+    /// Byte range of the whole link in the file, from `[[`, `![[` or `[` to the closing `]]` or `)`. Write tools patch
+    /// the link text inside it (doc 07 §6.1).
+    pub range: Range<usize>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -683,6 +686,7 @@ impl<'a> NoteParser<'a> {
                 target: l.target,
                 relation: l.relation,
                 line: l.line,
+                range: l.range,
             })
             .collect();
         ParsedNote {

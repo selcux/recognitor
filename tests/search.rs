@@ -374,7 +374,7 @@ fn ns_boost_lifts_notes_linked_from_the_namespace() {
     let v = TestVault::new(&[
         ("aaa/Plain.md", "# Plain\n\nMarker zebra.\n"),
         ("bbb/Linked.md", "# Linked\n\nMarker zebra.\n"),
-        ("ccc/Home.md", "# Home\n\nSee [[bbb/Linked]] for more.\n"),
+        ("ccc/Home.md", "# Home\n\nSee [[bbb::Linked]] for more.\n"),
     ]);
     let index = v.index();
     assert_eq!(ids(&page_of(&index, "zebra", None, 1)), ["aaa/Plain", "bbb/Linked"]);

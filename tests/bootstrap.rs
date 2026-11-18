@@ -411,7 +411,7 @@ fn links_out_of_the_bootstrap_are_not_followed() {
             "bootstrap/index.md",
             &note(
                 "Bootstrap",
-                "## Relations\n- has_part [[knowledge::Deploy]]\n- indexes [[archive/Session 1]]\n\
+                "## Relations\n- has_part [[knowledge::Deploy]]\n- indexes [[archive::Session 1]]\n\
                  - has_part [[Inside]]\n",
             ),
         ),
@@ -1106,7 +1106,7 @@ fn list_shows_the_link_as_written_and_the_file_name() {
     let v = TestVault::new(&[
         (
             "bootstrap/index.md",
-            "# Index\n\nS.\n\n## Relations\n- has_part [[Tools & sourcing]]\n- has_part [[bootstrap/deep/Plain]]\n\
+            "# Index\n\nS.\n\n## Relations\n- has_part [[Tools & sourcing]]\n- has_part [[deep/Plain]]\n\
              - has_part [[SHOUT]]\n- indexes [[tools]]\n",
         ),
         ("bootstrap/tools.md", "# Tools & sourcing\n\nS.\n"),
@@ -1117,7 +1117,7 @@ fn list_shows_the_link_as_written_and_the_file_name() {
         stdout(&v.cli(&["bootstrap", "--list"])),
         "bootstrap/index.md\n\
          \u{251c}\u{2500}\u{2500} Tools & sourcing \u{2192} tools.md\n\
-         \u{251c}\u{2500}\u{2500} bootstrap/deep/Plain \u{2192} Plain.md\n\
+         \u{251c}\u{2500}\u{2500} deep/Plain \u{2192} Plain.md\n\
          \u{251c}\u{2500}\u{2500} SHOUT \u{2192} Shout.md\n\
          \u{2514}\u{2500}\u{2500} tools \u{2192} tools.md  (already loaded)\n"
     );

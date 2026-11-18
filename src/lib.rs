@@ -16,10 +16,12 @@ pub mod outline;
 pub mod parse;
 pub mod paths;
 pub mod read;
+pub mod relink;
 pub mod report;
 pub mod resolve;
 pub mod search;
 pub mod walk;
+mod write;
 
 pub use error::{Error, Result};
 pub use index::{Index, SweepOptions, SweepReport};

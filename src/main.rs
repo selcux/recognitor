@@ -1,6 +1,6 @@
 //! `recognitor` CLI: a thin layer over the library. Commands are defined in doc 07 §12.
 //!
-//! Shadow mode builds `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap` and `config get/set`. The vault comes from
+//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `relink` and `config get/set`. The vault comes from
 //! `--vault`, else `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
 
 use std::path::PathBuf;
@@ -17,6 +17,7 @@ const USAGE: &str = "usage: recognitor <command> [--vault <path>] [--report]
        recognitor context <note> [--vault <path>] [--page <n>]
        recognitor read <note> [--section <heading>] [--query <text>] [--vault <path>]
        recognitor bootstrap [--list] [--vault <path>]
+       recognitor relink <old> <new> <note>... [--vault <path>]
        recognitor mcp [--vault <path>]
        recognitor config get <key>
        recognitor config set <key> <value>
@@ -28,7 +29,9 @@ commands:
   context <note>            the links around one note: an id, a path or a link name
   read <note>               one note under a header line with its checksum; --section reads one part, a long note is cut
   bootstrap                 print the bootstrap payload (the notes linked from bootstrap/index.md)
-  mcp                       serve the read tools over MCP on stdio (one server per client session)
+  relink <old> <new> <note>...
+                            rewrite the links to a moved note in the notes given; old is its id before the move
+  mcp                       serve the tools over MCP on stdio (one server per client session)
   config get <key>          print a config value
   config set <key> <value>  set a config value
 
@@ -70,6 +73,11 @@ enum Command {
     },
     Bootstrap {
         list: bool,
+    },
+    Relink {
+        old: String,
+        new: String,
+        notes: Vec<String>,
     },
     Mcp,
     Config(ConfigCommand),
@@ -143,6 +151,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             query,
         },
         ("bootstrap", []) => Command::Bootstrap { list },
+        ("relink", [old, new, notes @ ..]) if !notes.is_empty() => Command::Relink {
+            old: old.clone(),
+            new: new.clone(),
+            notes: notes.to_vec(),
+        },
+        ("relink", _) => return Err("relink needs old, new and at least one note".to_string()),
         ("mcp", []) => Command::Mcp,
         ("config", [sub, key]) if sub == "get" => Command::Config(ConfigCommand::Get(key.clone())),
         ("config", [sub, key, value]) if sub == "set" => {
@@ -219,6 +233,7 @@ fn run(args: &Args) -> recognitor::Result<String> {
             let max_tokens = config::bootstrap_max_tokens(&config_file)?.unwrap_or(DEFAULT_MAX_TOKENS);
             Ok(bootstrap.render(max_tokens))
         }
+        Command::Relink { old, new, notes } => Ok(recognitor::relink::render(&index.relink(old, new, notes)?)),
         Command::Config(cmd) => run_config(cmd),
         Command::Mcp => run_mcp(args),
     }

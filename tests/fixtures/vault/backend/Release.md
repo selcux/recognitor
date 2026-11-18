@@ -8,7 +8,7 @@ type: process
 Steps to ship a release.
 
 Follow [the deploy checklist](../ops/Deploy%20Checklist.md) before release.
-See [[Auth Flow]] and again [[Auth Flow|the flow]], [[Security Architecture]] and [[backend/guides/Setup]].
+See [[Auth Flow]] and again [[Auth Flow|the flow]], [[Security Architecture]] and [[guides/Setup]].
 A link out of the vault [up](../../outside.md) is ignored.
 
 ## Relations

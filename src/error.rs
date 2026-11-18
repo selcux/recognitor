@@ -28,6 +28,9 @@ pub enum Error {
     EmptyQuery,
     /// A note named in a tool call matches no note (doc 07 §6.3). Holds the name as given.
     NoteNotFound(String),
+    /// `relink`'s `old` is not a note id with its folder (doc 07 §6.3: `old` is the id the note had). Holds it as
+    /// given.
+    OldNotAnId(String),
     /// `read_note` with a `section` that names no heading of the note (doc 07 §7.3, "No match"). `note` is the id as
     /// doc 07 §4.2 shows it; `sections` are the note's top-level sections.
     NoSection {
@@ -105,6 +108,10 @@ impl fmt::Display for Error {
             Error::NoBootstrap => write!(f, "bootstrap/index.md not found. Run `recognitor lint`."),
             // Doc 07 §6.3: `not found`. The name is quoted as in the "matches N notes" line.
             Error::NoteNotFound(name) => write!(f, "\"{name}\" not found"),
+            Error::OldNotAnId(old) => write!(
+                f,
+                "\"{old}\" is not a note id: old needs the id the note had before the move, with its folder"
+            ),
             Error::NoSection { note, name, sections } => {
                 let listed: Vec<String> = sections.iter().map(|s| format!("\"{s}\"")).collect();
                 if listed.is_empty() {
@@ -151,6 +158,7 @@ impl std::error::Error for Error {
             Error::Vault(_)
             | Error::EmptyQuery
             | Error::NoteNotFound(_)
+            | Error::OldNotAnId(_)
             | Error::NoSection { .. }
             | Error::NoBootstrap
             | Error::Mcp(_)

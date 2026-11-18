@@ -81,10 +81,10 @@ fn example_vault() -> TestVault {
         (
             "recognitor/Decisions.md",
             "# Decisions\n\nDurable decisions for the engine, newest first.\n\n## Relations\n\
-             - part_of [[recognitor/index]]\n\
+             - part_of [[index]]\n\
              - relates_to [[compass::Feedback loops]]\n\
              - relates_to [[Gall's law]]\n\
-             - relates_to [[archive/recognitor/Session 2026-11-14]]\n",
+             - relates_to [[archive::recognitor/Session 2026-11-14]]\n",
         ),
         (
             "recognitor/index.md",
@@ -174,7 +174,7 @@ fn only_has_part_and_part_of_pair_up() {
         ),
         (
             "a/Topic.md",
-            "# Topic\n\nA topic.\n\n## Relations\n- part_of [[a/index]]\n- relates_to [[a/index]]\n",
+            "# Topic\n\nA topic.\n\n## Relations\n- part_of [[index]]\n- relates_to [[index]]\n",
         ),
     ]);
     let text = run(&v.index(), "a/index");
@@ -189,12 +189,12 @@ fn bootstrap_notes_are_never_listed() {
     let v = TestVault::new(&[
         (
             "a/Note.md",
-            "# Note\n\nA note.\n\n## Relations\n- relates_to [[bootstrap/Rules]]\n- relates_to [[Other]]\n",
+            "# Note\n\nA note.\n\n## Relations\n- relates_to [[bootstrap::Rules]]\n- relates_to [[Other]]\n",
         ),
         ("a/Other.md", "# Other\n\nAnother note.\n"),
         (
             "bootstrap/index.md",
-            "# Bootstrap\n\nEntry.\n\n## Relations\n- indexes [[Rules]]\n\nSee [[a/Note]].\n",
+            "# Bootstrap\n\nEntry.\n\n## Relations\n- indexes [[Rules]]\n\nSee [[a::Note]].\n",
         ),
         ("bootstrap/Rules.md", "# Rules\n\nGlobal rules.\n"),
     ]);
@@ -212,7 +212,7 @@ fn a_bootstrap_note_can_be_asked_about_but_its_bootstrap_neighbors_stay_hidden()
         ),
         (
             "bootstrap/Rules.md",
-            "# Rules\n\nGlobal rules.\n\n## Relations\n- relates_to [[a/Note]]\n- relates_to [[bootstrap/index]]\n",
+            "# Rules\n\nGlobal rules.\n\n## Relations\n- relates_to [[a::Note]]\n- relates_to [[index]]\n",
         ),
     ]);
     assert_eq!(
@@ -305,7 +305,7 @@ fn two_spellings_of_one_link_are_one_line() {
     let v = TestVault::new(&[
         (
             "a/Note.md",
-            "# Note\n\nA note.\n\nSee [[Target]], and again [[a/Target]].\n",
+            "# Note\n\nA note.\n\nSee [[Target]], and again [[a::Target]].\n",
         ),
         ("a/Target.md", "# Target\n\nThe target.\n"),
     ]);
@@ -362,11 +362,11 @@ fn links_only_to_and_from_bootstrap_count_as_no_links() {
     let v = TestVault::new(&[
         (
             "a/Note.md",
-            "# Note\n\nA note.\n\n## Relations\n- relates_to [[bootstrap/Rules]]\n",
+            "# Note\n\nA note.\n\n## Relations\n- relates_to [[bootstrap::Rules]]\n",
         ),
         (
             "bootstrap/index.md",
-            "# Bootstrap\n\nEntry.\n\n## Relations\n- indexes [[Rules]]\n\nSee [[a/Note]].\n",
+            "# Bootstrap\n\nEntry.\n\n## Relations\n- indexes [[Rules]]\n\nSee [[a::Note]].\n",
         ),
         ("bootstrap/Rules.md", "# Rules\n\nGlobal rules.\n"),
     ]);

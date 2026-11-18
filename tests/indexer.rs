@@ -457,7 +457,7 @@ fn edges_one_row_per_link_key_explicit_first() {
         .unwrap();
     assert_eq!(
         (target_ref.as_str(), ref_key.as_str()),
-        ("../ops/Deploy%20Checklist.md", "ops/deploy checklist")
+        ("../ops/Deploy%20Checklist.md", "/ops/deploy checklist")
     );
     // A Markdown link out of the vault makes no edge (doc 03 §3).
     assert_eq!(
@@ -491,11 +491,12 @@ fn edges_one_row_per_link_key_explicit_first() {
         some("ops/deploy checklist")
     );
     assert_eq!(
-        target_of(&index, "backend/release", "links_to", "backend/guides/setup"),
-        some("backend/guides/setup")
+        target_of(&index, "backend/release", "links_to", "guides/setup"),
+        some("backend/guides/setup"),
+        "the path link, from the namespace folder"
     );
     assert_eq!(
-        target_of(&index, "backend/release", "links_to", "ops/deploy checklist"),
+        target_of(&index, "backend/release", "links_to", "/ops/deploy checklist"),
         some("ops/deploy checklist"),
         "the Markdown link, resolved by its key"
     );
@@ -692,7 +693,7 @@ A root file.
     assert_eq!(
         rows,
         vec![
-            ("./Real".to_string(), "a/real".to_string(), Some("a/real".to_string())),
+            ("./Real".to_string(), "/a/real".to_string(), Some("a/real".to_string())),
             ("README".to_string(), "readme".to_string(), None),
         ],
         "only the path link into a folder and the name link remain"
@@ -810,7 +811,7 @@ fn case_twin_files_are_all_left_out() {
     v.write("baseline/nutrition.md", "# Nutrition\n\nLower twin.\n", 0);
     v.write(
         "baseline/Sleep.md",
-        "# Sleep\n\nSee [[baseline/nutrition]] and [[Nutrition]].\n",
+        "# Sleep\n\nSee [[./nutrition]] and [[Nutrition]].\n",
         0,
     );
     v.write("baseline/Note.md", "# Note\n\nS.\n", 0);
@@ -828,7 +829,7 @@ fn case_twin_files_are_all_left_out() {
     );
     // A link to a twin is a plain ghost (doc 03 §4).
     assert_eq!(
-        target_of(&index, "baseline/sleep", "links_to", "baseline/nutrition"),
+        target_of(&index, "baseline/sleep", "links_to", "/baseline/nutrition"),
         Some(None)
     );
     assert_eq!(target_of(&index, "baseline/sleep", "links_to", "nutrition"), Some(None));
@@ -853,7 +854,7 @@ fn case_twin_files_are_all_left_out() {
     assert_eq!(path_of(&index, "baseline/nutrition"), "baseline/nutrition.md");
     // The ghosts healed through the keys.
     assert_eq!(
-        target_of(&index, "baseline/sleep", "links_to", "baseline/nutrition"),
+        target_of(&index, "baseline/sleep", "links_to", "/baseline/nutrition"),
         some("baseline/nutrition")
     );
     assert_eq!(
@@ -1080,29 +1081,39 @@ fn link_written_first_heals_when_the_file_appears_by_every_name() {
     v.write("a/index.md", "# A\n\nS.\n", 0);
     v.write(
         "a/Src.md",
-        "# Src\n\nS.\n\nSee [[Later Title]], [[later-file]], [[b::Later Title]], [[b/deep/later-file]], \
+        "# Src\n\nS.\n\nSee [[Later Title]], [[later-file]], [[b::Later Title]], [[b::deep/later-file]], [[deep/Mid]], \
          [[Unrelated]].\n",
         0,
     );
     let mut index = v.open();
     let r = index.rebuild(opts()).unwrap();
-    assert_eq!(r.totals.ghosts, 5);
+    assert_eq!(r.totals.ghosts, 6);
+    v.write(
+        "a/deep/Mid.md",
+        "# Mid
+
+S.
+",
+        10,
+    );
     v.write(
         "b/deep/later-file.md",
         "---\ntitle: Later Title\n---\n\n# Ignored\n\nS.\n",
         10,
     );
     let r = index.sync(opts()).unwrap();
-    // The title, the filename, the prefixed title and the path match; `Unrelated` is not looked at.
-    assert_eq!(r.reresolved, 4);
+    // The title, the filename, the prefixed title and the prefixed path of the first note, and the path inside the
+    // namespace of the second; `Unrelated` is not looked at.
+    assert_eq!(r.reresolved, 5);
     assert_eq!(r.totals.ghosts, 1);
-    for ref_key in ["later title", "later-file", "b::later title", "b/deep/later-file"] {
+    for ref_key in ["later title", "later-file", "b::later title", "b::deep/later-file"] {
         assert_eq!(
             target_of(&index, "a/src", "links_to", ref_key),
             some("b/deep/later-file"),
             "{ref_key}"
         );
     }
+    assert_eq!(target_of(&index, "a/src", "links_to", "deep/mid"), some("a/deep/mid"));
     assert_eq!(target_of(&index, "a/src", "links_to", "unrelated"), Some(None));
 }
 
@@ -1219,7 +1230,7 @@ fn a_move_outside_recognitor_breaks_path_links_and_is_not_reported() {
     let v = TestVault::fixture("move");
     let mut index = v.open();
     index.rebuild(opts()).unwrap();
-    // `[[backend/guides/Setup]]` is a path link; it breaks when the file moves (doc 03 §4).
+    // `[[guides/Setup]]` is a path link from the namespace folder; it breaks when the file leaves it (doc 03 §4).
     let content = fs::read(v.path("backend/guides/Setup.md")).unwrap();
     fs::remove_file(v.path("backend/guides/Setup.md")).unwrap();
     fs::create_dir_all(v.path("ops/guides")).unwrap();
@@ -1229,7 +1240,7 @@ fn a_move_outside_recognitor_breaks_path_links_and_is_not_reported() {
     assert_eq!(r.added, vec!["ops/guides/Setup".to_string()]);
     assert!(r.renamed.is_empty());
     assert_eq!(
-        target_of(&index, "backend/release", "links_to", "backend/guides/setup"),
+        target_of(&index, "backend/release", "links_to", "guides/setup"),
         Some(None)
     );
 }
@@ -1250,7 +1261,7 @@ fn name_links_survive_a_move() {
     );
     // The Markdown link is an exact path, so it breaks.
     assert_eq!(
-        target_of(&index, "backend/release", "links_to", "ops/deploy checklist"),
+        target_of(&index, "backend/release", "links_to", "/ops/deploy checklist"),
         Some(None)
     );
 }
@@ -1285,17 +1296,17 @@ fn markdown_links_follow_the_key() {
         vec![
             (
                 "Note%20%28draft%29.md".to_string(),
-                "common/guides/note (draft)".to_string(),
+                "/common/guides/note (draft)".to_string(),
                 Some("common/guides/note (draft)".to_string())
             ),
             (
                 "Setup".to_string(),
-                "common/guides/setup".to_string(),
+                "/common/guides/setup".to_string(),
                 Some("common/guides/setup".to_string())
             ),
             (
                 "../Top.md".to_string(),
-                "common/top".to_string(),
+                "/common/top".to_string(),
                 Some("common/top".to_string())
             ),
         ],

@@ -215,6 +215,12 @@ impl Index {
         &self.root
     }
 
+    /// Takes the write lock between processes (doc 07 §5.1 step 1): `BEGIN IMMEDIATE`, waiting up to `busy_timeout`
+    /// for another writer. Every write tool runs inside it.
+    pub(crate) fn write_transaction(&mut self) -> Result<Transaction<'_>> {
+        Ok(self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?)
+    }
+
     /// `recognitor rebuild`: drop every table and re-index the whole vault.
     pub fn rebuild(&mut self, opts: SweepOptions) -> Result<SweepReport> {
         self.sweep(SweepKind::Rebuild, opts, &|p| fs::read(p), &|_| {})
@@ -564,7 +570,15 @@ fn run_sweep<F: Fn(WalkPoint<'_>) + Sync>(
             report.rehashed += 1;
             continue;
         }
-        let ix = index_note(&tx, f, bytes, &checksum, prior.is_some(), &mut counters, &mut report)?;
+        let ix = index_note(
+            &tx,
+            f,
+            bytes,
+            &checksum,
+            prior.is_some(),
+            &mut counters,
+            &mut report.warnings,
+        )?;
         let ns = namespace_of_key(&f.key).unwrap_or_default();
         match prior {
             Some(k) => {
@@ -662,7 +676,7 @@ fn index_note(
     checksum: &str,
     existed: bool,
     counters: &mut Counters,
-    report: &mut SweepReport,
+    warnings: &mut Vec<NoteWarning>,
 ) -> Result<Indexed> {
     let id = note_id(&f.rel).to_string();
     let key = f.key.as_str();
@@ -754,13 +768,77 @@ fn index_note(
         ])?;
     }
 
-    report
-        .warnings
-        .extend(note.warnings.into_iter().map(|warning| NoteWarning {
-            note: id.clone(),
-            warning,
-        }));
+    warnings.extend(note.warnings.into_iter().map(|warning| NoteWarning {
+        note: id.clone(),
+        warning,
+    }));
     Ok(Indexed { id, title, rows })
+}
+
+/// Re-indexes one note whose file a write tool has just replaced (doc 07 §5.1 step 5), inside that tool's
+/// transaction. `rel` is the stored path and `bytes` what was written. Works like the sweep for one saved file: the
+/// note's rows are rewritten, its own links resolved, and when its title changed, the links that use the old or the
+/// new title are resolved again (doc 03 §4).
+pub(crate) fn reindex_written(tx: &Transaction<'_>, root: &Path, rel: &str, bytes: Vec<u8>) -> Result<()> {
+    let abs = root.join(rel);
+    let meta = fs::metadata(&abs).map_err(|e| Error::io(&abs, e))?;
+    let key = note_key(rel);
+    let f = FileEntry {
+        rel: rel.to_string(),
+        abs,
+        key: key.clone(),
+        mtime_ms: crate::walk::mtime_ms(&meta),
+        size: i64::try_from(meta.len()).unwrap_or(i64::MAX),
+    };
+    let prior_title: Option<String> = tx
+        .query_row("SELECT title FROM notes WHERE key = ?1", [&key], |r| r.get(0))
+        .optional()?;
+    let checksum = sha256_hex(&bytes);
+    let mut counters = Counters::default();
+    let mut warnings = Vec::new();
+    let ix = index_note(
+        tx,
+        &f,
+        bytes,
+        &checksum,
+        prior_title.is_some(),
+        &mut counters,
+        &mut warnings,
+    )?;
+    let ns = namespace_of_key(&key).unwrap_or_default();
+    let mut names: Vec<String> = Vec::new();
+    if prior_title.as_deref() != Some(ix.title.as_str()) {
+        if let Some(old) = &prior_title {
+            names.extend(names_of(&key, ns, old));
+        }
+        names.extend(names_of(&key, ns, &ix.title));
+        names.sort();
+        names.dedup();
+    }
+    let saved = HashMap::from([(
+        key.clone(),
+        Saved {
+            id: ix.id,
+            rows: ix.rows,
+        },
+    )]);
+    for name in &names {
+        reresolve_by_name(tx, name, &saved, &mut counters, &mut warnings)?;
+    }
+    let note = &saved[&key];
+    for row in &note.rows {
+        let edge = EdgeRef {
+            source_key: &key,
+            source_id: &note.id,
+            predicate: &row.predicate,
+            ref_key: &row.ref_key,
+            target_ref: &row.target_ref,
+            position: row.position,
+            current: None,
+        };
+        resolve_edge(tx, ns, &edge, &mut counters, &mut warnings)?;
+    }
+    Ok(())
 }
 
 /// Edge rows in insertion order: explicit relations first, then inline links, one row per `(predicate, ref_key)` with
