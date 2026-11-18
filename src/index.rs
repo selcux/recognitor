@@ -841,6 +841,120 @@ pub(crate) fn reindex_written(tx: &Transaction<'_>, root: &Path, rel: &str, byte
     Ok(())
 }
 
+/// A link that pointed to a note a write tool has just removed, and now points nowhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BrokenEdge {
+    /// The linking note's id as doc 07 §4.2 shows it, with its title when that differs from the filename.
+    pub source: String,
+    pub predicate: String,
+    /// The link's target as the linking note wrote it.
+    pub target_ref: String,
+    pub now: LinkNow,
+}
+
+/// Where a link that pointed to a deleted note leads now (doc 07 §10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LinkNow {
+    /// No note: a ghost.
+    Nowhere,
+    /// The target now matches several notes, so the link is a ghost until one is named (doc 03 §4).
+    Ambiguous,
+    /// Another note, by the same link: its id as written.
+    Note(String),
+}
+
+/// Removes the rows of a note a write tool has just moved out of the vault (doc 07 §5.1 step 5, §10), inside that
+/// tool's transaction. Works like the sweep for one deleted file: the cascade removes the note's rows, the trigger
+/// turns the links that pointed to it into ghosts, and the links that use one of its names are resolved again, since
+/// a name the note shared with another note may now reach that one (doc 03 §4).
+///
+/// Returns the links that pointed to the note, with where each leads now (doc 07 §10): nowhere, to several notes, or
+/// to another note. Linking notes come in id order (ignoring case) and each note's links in written order. The
+/// note's links to itself go with it.
+pub(crate) fn unindex_deleted(tx: &Transaction<'_>, key: &str) -> Result<Vec<BrokenEdge>> {
+    let title: String = tx.query_row("SELECT title FROM notes WHERE key = ?1", [key], |r| r.get(0))?;
+    let ns = namespace_of_key(key).unwrap_or_default();
+    let incoming: Vec<(String, String, String)> = {
+        let mut stmt = tx.prepare_cached(
+            "SELECT source_key, predicate, ref_key FROM edges WHERE target_key = ?1 AND source_key != ?1",
+        )?;
+        let rows = stmt.query_map([key], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    tx.execute("DELETE FROM notes WHERE key = ?1", [key])?;
+    let mut names = names_of(key, ns, &title);
+    names.sort();
+    names.dedup();
+    let saved = HashMap::new();
+    let mut counters = Counters::default();
+    let mut warnings = Vec::new();
+    for name in &names {
+        reresolve_by_name(tx, name, &saved, &mut counters, &mut warnings)?;
+    }
+    struct Row {
+        path: String,
+        title: String,
+        title_key: String,
+        name_key: String,
+        source_key: String,
+        predicate: String,
+        target_ref: String,
+        ref_key: String,
+        position: u32,
+        target_key: Option<String>,
+    }
+    let mut broken: Vec<Row> = Vec::new();
+    let mut stmt = tx.prepare_cached(concat!(
+        "SELECT n.path, n.title, n.title_key, n.name_key, e.source_key, e.predicate, e.target_ref, e.ref_key, ",
+        "e.position, e.target_key FROM edges e JOIN notes n ON n.key = e.source_key ",
+        "WHERE e.source_key = ?1 AND e.predicate = ?2 AND e.ref_key = ?3",
+    ))?;
+    for (source_key, predicate, ref_key) in &incoming {
+        let found = stmt
+            .query_row(params![source_key, predicate, ref_key], |r| {
+                Ok(Row {
+                    path: r.get(0)?,
+                    title: r.get(1)?,
+                    title_key: r.get(2)?,
+                    name_key: r.get(3)?,
+                    source_key: r.get(4)?,
+                    predicate: r.get(5)?,
+                    target_ref: r.get(6)?,
+                    ref_key: r.get(7)?,
+                    position: r.get(8)?,
+                    target_key: r.get(9)?,
+                })
+            })
+            .optional()?;
+        broken.extend(found);
+    }
+    broken.sort_by(|a, b| {
+        (a.path.to_lowercase(), a.position, &a.predicate).cmp(&(b.path.to_lowercase(), b.position, &b.predicate))
+    });
+    broken
+        .into_iter()
+        .map(|r| {
+            let now = match &r.target_key {
+                Some(target) => {
+                    let path: String = tx.query_row("SELECT path FROM notes WHERE key = ?1", [target], |x| x.get(0))?;
+                    LinkNow::Note(note_id(&path).to_string())
+                }
+                None => match resolve(tx, namespace_of_key(&r.source_key).unwrap_or_default(), &r.ref_key)? {
+                    Resolution::Ambiguous(_) => LinkNow::Ambiguous,
+                    _ => LinkNow::Nowhere,
+                },
+            };
+            let shown_title = (r.title_key != r.name_key).then_some(r.title.as_str());
+            Ok(BrokenEdge {
+                source: crate::paths::titled_id(note_id(&r.path), shown_title),
+                predicate: r.predicate,
+                target_ref: r.target_ref,
+                now,
+            })
+        })
+        .collect()
+}
+
 /// Edge rows in insertion order: explicit relations first, then inline links, one row per `(predicate, ref_key)` with
 /// the first spelling kept (doc 05 §2.2). Markdown links that leave the vault are dropped (doc 03 §3). Also returns
 /// how many links could become rows, so the report can count the merged ones.

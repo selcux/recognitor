@@ -334,7 +334,8 @@ fn tools_list_has_the_read_tools_and_the_write_tools() {
             "read_note",
             "write_note",
             "edit_note",
-            "relink"
+            "relink",
+            "delete_note"
         ]
     );
 }
@@ -1357,5 +1358,158 @@ fn load_namespace_of_a_name_with_a_slash_is_the_no_namespace_error() {
         server
             .ok("load_namespace", json!({"ns": "backend"}))
             .contains("Start here.")
+    );
+}
+
+// `delete_note` (doc 07 §10): MCP only, the CLI has no delete command (§12).
+
+/// The checksum in the header line of a `read_note` result.
+fn checksum_of(read: &str) -> String {
+    read.lines()
+        .next()
+        .unwrap()
+        .rsplit_once("checksum: ")
+        .unwrap()
+        .1
+        .to_string()
+}
+
+#[test]
+fn delete_note_checks_its_arguments_over_mcp() {
+    let v = vault();
+    let mut server = v.server();
+    let list = server.list_tools();
+    let schema = list["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "delete_note")
+        .unwrap()["inputSchema"]
+        .clone();
+    assert_eq!(schema["required"], json!(["note", "expected_checksum"]));
+    assert_eq!(server.err("delete_note", json!({})), "delete_note needs a note");
+    assert_eq!(
+        server.err("delete_note", json!({"note": "backend/Release"})),
+        "delete_note needs expected_checksum"
+    );
+    // An empty string counts as not given (doc 07 §2.1).
+    assert_eq!(
+        server.err(
+            "delete_note",
+            json!({"note": "backend/Release", "expected_checksum": ""})
+        ),
+        "delete_note needs expected_checksum"
+    );
+    assert_eq!(
+        server.err(
+            "delete_note",
+            json!({"note": "backend/Release", "expected_checksum": 5})
+        ),
+        "expected_checksum needs text"
+    );
+    assert_eq!(
+        server.err(
+            "delete_note",
+            json!({"note": "backend/Release", "expected_checksum": "abc", "section": "x"})
+        ),
+        "unexpected argument: section"
+    );
+    // Nothing above deleted anything.
+    assert!(v.root.join("backend/Release.md").exists());
+}
+
+#[test]
+fn delete_note_trashes_a_note_and_lists_the_broken_links_over_mcp() {
+    let v = vault();
+    let mut server = v.server();
+    let checksum = checksum_of(&server.ok("read_note", json!({"note": "backend/Release"})));
+    // A stale checksum is an error that returns the current note, and nothing moves.
+    let stale = server.err(
+        "delete_note",
+        json!({"note": "backend/Release", "expected_checksum": "000000000000"}),
+    );
+    assert_eq!(
+        stale,
+        format!(
+            "The note changed since that checksum, so nothing was deleted. Current version:\n\
+             backend/Release  checksum: {checksum}\n{RELEASE}"
+        )
+    );
+    assert!(v.root.join("backend/Release.md").exists());
+    // The right one moves it; the checksum is matched ignoring case, and the note by its name.
+    let text = server.ok(
+        "delete_note",
+        json!({"note": "backend::Release", "expected_checksum": checksum.to_uppercase()}),
+    );
+    let (head, links) = text.split_once("broken links: ").unwrap();
+    let mut head = head.lines();
+    assert_eq!(head.next(), Some("deleted: backend/Release"));
+    let trash = head.next().unwrap().strip_prefix("trash: .recognitor/trash/").unwrap();
+    assert!(trash.ends_with("Z/backend/Release.md"), "{trash}");
+    assert_eq!(
+        links,
+        "2 links in 2 notes\n\
+         - backend/Auth Flow: relates_to Release\n\
+         - meta/index, titled \"Meta hub\": indexes backend::Release\n"
+    );
+    assert!(!v.root.join("backend/Release.md").exists());
+    assert_eq!(
+        fs::read_to_string(v.root.join(".recognitor/trash").join(trash)).unwrap(),
+        RELEASE
+    );
+    // The note is gone for every tool, and a second delete is "not found".
+    assert_eq!(
+        server.err("read_note", json!({"note": "backend/Release"})),
+        "\"backend/Release\" not found"
+    );
+    assert_eq!(
+        server.err(
+            "delete_note",
+            json!({"note": "backend/Release", "expected_checksum": checksum})
+        ),
+        "\"backend/Release\" not found"
+    );
+}
+
+#[test]
+fn delete_note_refuses_the_archive_and_asks_which_of_several_and_carries_the_bootstrap_notice() {
+    let v = vault();
+    let mut server = v.server();
+    // The archive.
+    let record = server.ok("read_note", json!({"note": "archive/2026-11-01 session"}));
+    assert_eq!(
+        server.err(
+            "delete_note",
+            json!({"note": "archive/2026-11-01 session", "expected_checksum": checksum_of(&record)})
+        ),
+        "Archive notes are append only: delete_note never removes one. Only the user can delete the file."
+    );
+    assert!(v.root.join("archive/2026-11-01 session.md").exists());
+    // Several matches are a normal result, and nothing moves.
+    assert_eq!(
+        server.ok(
+            "delete_note",
+            json!({"note": "Caching", "expected_checksum": "000000000000"})
+        ),
+        "\"Caching\" matches 2 notes. Call again with one id:\n  ops/Caching\n  research/Caching\n"
+    );
+    assert!(v.root.join("ops/Caching.md").exists() && v.root.join("research/Caching.md").exists());
+    // A bootstrap note.
+    let profile = server.ok("read_note", json!({"note": "bootstrap/Profile"}));
+    let text = server.ok(
+        "delete_note",
+        json!({"note": "bootstrap/Profile", "expected_checksum": checksum_of(&profile)}),
+    );
+    assert!(
+        text.starts_with("deleted: bootstrap/Profile\ntrash: .recognitor/trash/"),
+        "{text}"
+    );
+    assert!(
+        text.ends_with(
+            "broken links: 1 link in 1 note\n\
+             - bootstrap/index, titled \"Bootstrap\": indexes Profile\n\
+             notice: bootstrap/Profile no longer loads as instructions at session start\n"
+        ),
+        "{text}"
     );
 }
