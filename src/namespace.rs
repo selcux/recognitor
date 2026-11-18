@@ -8,7 +8,9 @@ use crate::bootstrap::{trim_blank_edges, without_frontmatter};
 use crate::error::{Error, Result};
 use crate::index::{Index, SweepOptions};
 use crate::paths::{BOOTSTRAP_NAMESPACE, note_id, titled_id};
-use crate::search::PAGE_SIZE;
+
+/// Notes listed for a namespace without an index note (doc 07 §3). Not the page size of `search`.
+pub const LIST_SIZE: usize = 10;
 
 /// The line the tool adds after an entry note (doc 07 §3, "Output"). `ns` is spelled as the folder is on disk
 /// (doc 07 §3, "Spelling in the line").
@@ -81,7 +83,7 @@ pub fn load(conn: &Connection, ns: &str) -> Result<String> {
     let mut stmt = conn.prepare(
         "SELECT path, title, title_key, name_key, summary FROM notes WHERE namespace = ?1 ORDER BY key LIMIT ?2",
     )?;
-    let rows = stmt.query_map(params![key, PAGE_SIZE as i64], |row| {
+    let rows = stmt.query_map(params![key, LIST_SIZE as i64], |row| {
         let path: String = row.get(0)?;
         let title: String = row.get(1)?;
         let title_key: String = row.get(2)?;
@@ -105,10 +107,10 @@ pub fn load(conn: &Connection, ns: &str) -> Result<String> {
     }
     let spelled = spelled.unwrap_or_else(|| ns.to_string());
     let mut out = format!("{}\n{list}", no_index_line(&spelled));
-    if total > PAGE_SIZE {
+    if total > LIST_SIZE {
         out.push_str(&format!(
             "{} more. Search with ns: \"{spelled}\" to find them.\n",
-            total - PAGE_SIZE
+            total - LIST_SIZE
         ));
     }
     Ok(out)

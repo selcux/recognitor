@@ -312,7 +312,7 @@ SELECT
 FROM notes_vec v
 JOIN notes n ON n.pk = v.note_pk
 WHERE v.embedding MATCH ?1
-  AND k = 50                                   -- candidates; the ns boost and paging pick the final 10
+  AND k = 50                                   -- candidates; the ns boost and paging pick the final 5 
   AND v.namespace != 'archive'                 -- dropped when ns is archive
 ORDER BY v.distance ASC;
 ```
@@ -332,8 +332,10 @@ JOIN notes n ON n.pk = notes_fts.rowid
 WHERE notes_fts MATCH ?1
   AND (n.namespace != 'archive' OR ?2 = 'archive')  -- ?2 is the ns key; NULL without ns
 ORDER BY rank                                        -- bm25(): lower is better
-LIMIT 50;                                            -- candidates; the ns boost and paging pick the final 10
+LIMIT 50;                                            -- candidates; the ns boost and paging pick the final 5 
 ```
+
+When fewer than 5 rows come back and the query has more than one word, the same query runs again with the words joined by OR, and its rows that are not already hits fill page 1 ([07-interface-contracts.md §4.2](07-interface-contracts.md#42-output), "Some of the words").
 
 The observation lines under each hit come from `observations_fts`. Bootstrap and archive notes have no observations (§2.3), so that query needs no store condition.
 

@@ -384,23 +384,23 @@ fn ns_boost_lifts_notes_linked_from_the_namespace() {
     );
 }
 
-/// Doc 07 §4.2 "Paging": 10 hits per page; the last line says how many more exist.
+/// Doc 07 §4.2 "Paging": 5 hits per page; the last line says how many more exist.
 #[test]
-fn paging_ten_per_page() {
-    let v = vault_of(&many("common", 25, "zebra"));
+fn paging_five_per_page() {
+    let v = vault_of(&many("common", 13, "zebra"));
     let index = v.index();
-    assert_eq!(PAGE_SIZE, 10);
+    assert_eq!(PAGE_SIZE, 5);
 
     let p1 = page_of(&index, "zebra", None, 1);
-    assert_eq!((p1.hits.len(), p1.more), (10, 15));
-    assert!(search::render(&p1).ends_with("15 more: page 2\n"));
+    assert_eq!((p1.hits.len(), p1.more), (5, 8));
+    assert!(search::render(&p1).ends_with("8 more: page 2\n"));
 
     let p2 = page_of(&index, "zebra", None, 2);
-    assert_eq!((p2.hits.len(), p2.more), (10, 5));
-    assert!(search::render(&p2).ends_with("5 more: page 3\n"));
+    assert_eq!((p2.hits.len(), p2.more), (5, 3));
+    assert!(search::render(&p2).ends_with("3 more: page 3\n"));
 
     let p3 = page_of(&index, "zebra", None, 3);
-    assert_eq!((p3.hits.len(), p3.more), (5, 0));
+    assert_eq!((p3.hits.len(), p3.more), (3, 0));
     assert!(!search::render(&p3).contains("more: page"));
 
     // Pages do not overlap and cover every hit once.
@@ -410,7 +410,7 @@ fn paging_ten_per_page() {
         .collect();
     all.sort();
     all.dedup();
-    assert_eq!(all.len(), 25);
+    assert_eq!(all.len(), 13);
 }
 
 const NOTICE_60: &str = "Only the best 50 of 60 matches are kept; narrow the query to reach the rest.";
@@ -423,16 +423,16 @@ fn over_fifty_matches_say_so_on_every_page() {
     let index = v.index();
     assert_eq!(CANDIDATES, 50);
     let p1 = page_of(&index, "zebra", None, 1);
-    assert_eq!((p1.more, p1.total, p1.matches), (40, 50, Some(60)));
-    assert!(search::render(&p1).ends_with(&format!("40 more: page 2. {NOTICE_60}\n")));
+    assert_eq!((p1.more, p1.total, p1.matches), (45, 50, Some(60)));
+    assert!(search::render(&p1).ends_with(&format!("45 more: page 2. {NOTICE_60}\n")));
     let p4 = search::render(&page_of(&index, "zebra", None, 4));
-    assert!(p4.ends_with(&format!("10 more: page 5. {NOTICE_60}\n")), "{p4}");
+    assert!(p4.ends_with(&format!("30 more: page 5. {NOTICE_60}\n")), "{p4}");
     // The last page has no "more" line, so the notice is a line of its own.
-    let p5 = search::render(&page_of(&index, "zebra", None, 5));
-    assert!(p5.ends_with(&format!("\n{NOTICE_60}\n")), "{p5}");
-    assert!(!p5.contains("more: page"), "{p5}");
-    assert_eq!(page_of(&index, "zebra", None, 5).hits.len(), 10);
-    assert!(page_of(&index, "zebra", None, 6).hits.is_empty());
+    let p10 = search::render(&page_of(&index, "zebra", None, 10));
+    assert!(p10.ends_with(&format!("\n{NOTICE_60}\n")), "{p10}");
+    assert!(!p10.contains("more: page"), "{p10}");
+    assert_eq!(page_of(&index, "zebra", None, 10).hits.len(), 5);
+    assert!(page_of(&index, "zebra", None, 11).hits.is_empty());
 }
 
 /// Doc 07 §4.2 "Kept matches": exactly 50 matches are all kept, so there is no notice.
@@ -441,9 +441,9 @@ fn exactly_fifty_matches_have_no_notice() {
     let v = vault_of(&many("common", 50, "zebra"));
     let index = v.index();
     let p1 = page_of(&index, "zebra", None, 1);
-    assert_eq!((p1.more, p1.total, p1.matches), (40, 50, None));
-    assert!(search::render(&p1).ends_with("40 more: page 2\n"));
-    assert!(!search::render(&page_of(&index, "zebra", None, 5)).contains("Only the best"));
+    assert_eq!((p1.more, p1.total, p1.matches), (45, 50, None));
+    assert!(search::render(&p1).ends_with("45 more: page 2\n"));
+    assert!(!search::render(&page_of(&index, "zebra", None, 10)).contains("Only the best"));
 }
 
 /// Doc 07 §4.2 "Kept matches": fewer than 50 matches have no notice and no count.
@@ -455,8 +455,8 @@ fn fewer_than_fifty_matches_have_no_notice() {
     assert_eq!(p1.matches, None);
     assert!(!search::render(&p1).contains("Only the best"));
     assert!(
-        search::render(&page_of(&index, "zebra", None, 5)).ends_with("\n")
-            && page_of(&index, "zebra", None, 5).hits.len() == 9
+        search::render(&page_of(&index, "zebra", None, 10)).ends_with("\n")
+            && page_of(&index, "zebra", None, 10).hits.len() == 4
     );
 }
 
@@ -477,13 +477,13 @@ fn the_count_follows_the_archive_condition() {
     );
 }
 
-/// Doc 07 §4.2 "Paging": hit numbers continue across pages, so page 2 starts at `11.`
+/// Doc 07 §4.2 "Paging": hit numbers continue across pages, so page 2 starts at `6.`
 #[test]
 fn numbering_continues_over_pages() {
     let v = vault_of(&many("common", 12, "zebra"));
     let index = v.index();
     let text = run(&index, "zebra", None, 2);
-    assert!(text.starts_with("11. common/"), "{text}");
+    assert!(text.starts_with("6. common/"), "{text}");
 }
 
 /// Doc 07 §4.2 "No hits", one word: `No notes match "<query>".`, no hint.
@@ -510,7 +510,7 @@ Marker zebra.
     );
 }
 
-/// Doc 07 §4.2 "No hits", several words: the line goes on with the hint.
+/// Doc 07 §4.2 "No hits", several words: the line is printed only when not even one word matches, and it has no hint.
 #[test]
 fn no_hits_several_words() {
     let v = TestVault::new(&[(
@@ -522,14 +522,13 @@ Marker zebra.
     )]);
     let index = v.index();
     assert_eq!(
-        run(&index, "zebra kubernetes", None, 1),
-        "No notes match \"zebra kubernetes\". Every word must match; try fewer words.
+        run(&index, "giraffe kubernetes", None, 1),
+        "No notes match \"giraffe kubernetes\".
 "
     );
 }
 
-/// Doc 07 §4.2 "No hits": the words of a quoted phrase count, so a phrase of two words gets the hint, and a single
-/// quoted word does not.
+/// Doc 07 §4.2 "No hits": a quoted phrase is one part, so it gets no fill and no hint.
 #[test]
 fn no_hits_phrase() {
     let v = TestVault::new(&[(
@@ -542,7 +541,7 @@ Marker zebra.
     let index = v.index();
     assert_eq!(
         run(&index, "\"zebra kubernetes\"", None, 1),
-        "No notes match \"zebra kubernetes\". Every word must match; try fewer words.
+        "No notes match \"zebra kubernetes\".
 "
     );
     assert_eq!(
@@ -588,18 +587,18 @@ fn a_page_past_the_end_prints_one_line() {
     let v = vault_of(&many("common", 13, "zebra"));
     let index = v.index();
     assert_eq!(
-        run(&index, "zebra", None, 3),
-        "Page 3 is past the end: 13 results on 2 pages.\n"
+        run(&index, "zebra", None, 4),
+        "Page 4 is past the end: 13 results on 3 pages.\n"
     );
     assert_eq!(
         run(&index, "zebra", None, 9),
-        "Page 9 is past the end: 13 results on 2 pages.\n"
+        "Page 9 is past the end: 13 results on 3 pages.\n"
     );
     // The last page itself is not past the end, and has no "more" line.
-    assert!(run(&index, "zebra", None, 2).starts_with("11. common/"));
+    assert!(run(&index, "zebra", None, 3).starts_with("11. common/"));
     // Through the CLI: stdout, exit 0.
     let out = Command::new(env!("CARGO_BIN_EXE_recognitor"))
-        .args(["search", "zebra", "--page", "3", "--vault"])
+        .args(["search", "zebra", "--page", "4", "--vault"])
         .arg(&v.root)
         .env("RECOGNITOR_DB", &v.db)
         .output()
@@ -607,7 +606,7 @@ fn a_page_past_the_end_prints_one_line() {
     assert!(out.status.success());
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
-        "Page 3 is past the end: 13 results on 2 pages.\n"
+        "Page 4 is past the end: 13 results on 3 pages.\n"
     );
 }
 
@@ -620,19 +619,19 @@ fn past_the_end_singular_forms() {
         run(&index, "zebra", None, 2),
         "Page 2 is past the end: 1 result on 1 page.\n"
     );
-    // Ten results fill exactly one page.
-    let v = vault_of(&many("common", 10, "zebra"));
+    // Five results fill exactly one page.
+    let v = vault_of(&many("common", 5, "zebra"));
     let index = v.index();
     assert_eq!(
         run(&index, "zebra", None, 2),
-        "Page 2 is past the end: 10 results on 1 page.\n"
+        "Page 2 is past the end: 5 results on 1 page.\n"
     );
-    // Eleven results make two pages.
-    let v = vault_of(&many("common", 11, "zebra"));
+    // Six results make two pages.
+    let v = vault_of(&many("common", 6, "zebra"));
     let index = v.index();
     assert_eq!(
         run(&index, "zebra", None, 3),
-        "Page 3 is past the end: 11 results on 2 pages.\n"
+        "Page 3 is past the end: 6 results on 2 pages.\n"
     );
 }
 
@@ -643,8 +642,8 @@ fn past_the_end_with_the_kept_matches_notice() {
     let v = vault_of(&many("common", 60, "zebra"));
     let index = v.index();
     assert_eq!(
-        run(&index, "zebra", None, 6),
-        format!("Page 6 is past the end: 50 results on 5 pages. {NOTICE_60}\n")
+        run(&index, "zebra", None, 11),
+        format!("Page 11 is past the end: 50 results on 10 pages. {NOTICE_60}\n")
     );
 }
 
@@ -687,7 +686,10 @@ fn two_words_both_must_match() {
         ("common/One.md", "# One\n\nFeedback only.\n"),
     ]);
     let index = v.index();
-    assert_eq!(ids(&page_of(&index, "feedback loop", None, 1)), ["common/Both"]);
+    let page = page_of(&index, "feedback loop", None, 1);
+    // The note with both words comes first; the note with one word is the fill (doc 07 §4.2, "Some of the words").
+    assert_eq!(ids(&page), ["common/Both", "common/One"]);
+    assert_eq!(page.fill_start, Some(1));
 }
 
 /// Doc 07 §4 "Query text": `cost-of-change` is the phrase "cost of change".
@@ -773,7 +775,10 @@ Marker zebra here.
     let index = v.index();
     assert_eq!(ids(&page_of(&index, "\"zebra", None, 1)), ["common/Live"]);
     assert_eq!(ids(&page_of(&index, "zebra\"", None, 1)), ["common/Live"]);
-    assert_eq!(ids(&page_of(&index, "a\"b zebra", None, 1)), Vec::<&str>::new());
+    // `a"b` is one word and the note has no "a b", so only the fill finds the note.
+    let page = page_of(&index, "a\"b zebra", None, 1);
+    assert_eq!(ids(&page), ["common/Live"]);
+    assert_eq!(page.fill_start, Some(0));
 }
 
 /// Doc 07 §4 "Query text": no operators. `OR`, `NOT`, `*`, `:` and `^` are plain text, and `title:x` is no error.
@@ -787,9 +792,15 @@ Marker zebra and giraffe here.
 ",
     )]);
     let index = v.index();
-    // `OR` is a word, so AND applies and the note must hold the word "or".
-    assert!(page_of(&index, "zebra OR unicorn", None, 1).hits.is_empty());
-    assert!(page_of(&index, "zebra NOT giraffe", None, 1).hits.is_empty());
+    // `OR` is a word, so no note holds every word; the note comes only as the fill, for "zebra".
+    let page = page_of(&index, "zebra OR unicorn", None, 1);
+    assert_eq!((ids(&page), page.fill_start), (vec!["common/Live"], Some(0)));
+    // `NOT` is a word too: no note holds "not", and the note is again only the fill.
+    let page = page_of(&index, "zebra NOT unicorn", None, 1);
+    assert_eq!((ids(&page), page.fill_start), (vec!["common/Live"], Some(0)));
+    // Words that match nothing, operators or not: no hits.
+    assert!(page_of(&index, "unicorn OR narwhal", None, 1).hits.is_empty());
+    assert!(page_of(&index, "unicorn NOT narwhal", None, 1).hits.is_empty());
     assert_eq!(ids(&page_of(&index, "zebr*", None, 1)), Vec::<&str>::new());
     assert!(page_of(&index, "title:x", None, 1).hits.is_empty());
     // The colon only splits the word into the phrase "title marker", which the note does not hold.
@@ -885,10 +896,10 @@ fn cli_prints_the_page() {
     };
     let p1 = run_cli(&[]);
     assert!(p1.starts_with("1. common/N"), "{p1}");
-    assert!(p1.ends_with("2 more: page 2\n"), "{p1}");
-    let p2 = run_cli(&["--page", "2", "--ns", "common"]);
-    assert!(p2.starts_with("11. common/N"), "{p2}");
-    assert!(!p2.contains("more: page"), "{p2}");
+    assert!(p1.ends_with("7 more: page 2\n"), "{p1}");
+    let p3 = run_cli(&["--page", "3", "--ns", "common"]);
+    assert!(p3.starts_with("11. common/N"), "{p3}");
+    assert!(!p3.contains("more: page"), "{p3}");
 }
 
 /// Doc 07 §4 "Page": `page` starts at 1. Page 0, a negative number, a non-number or a missing value is a usage error:
@@ -945,7 +956,7 @@ fn hand_page(lines: &[Vec<String>]) -> SearchPage {
         page_size: 10,
         matches: None,
         query: "zebra".to_string(),
-        words: 1,
+        fill_start: None,
     }
 }
 
@@ -1115,7 +1126,7 @@ fn batched_observation_lines_equal_the_per_hit_lines() {
         "\"zebra and giraffe\" together",
     ] {
         for ns in [None, Some("common")] {
-            for page in 1..=2 {
+            for page in 1..=3 {
                 let got = page_of(&index, query, ns, page);
                 for hit in &got.hits {
                     let want =
@@ -1126,8 +1137,10 @@ fn batched_observation_lines_equal_the_per_hit_lines() {
         }
     }
     // The cases above really cover AND lines, the fallback and a note without lines.
-    let both = page_of(&index, "zebra giraffe", None, 1);
-    let lines = |id: &str| both.hits.iter().find(|h| h.id == id).map(|h| h.observations.len());
+    let both: Vec<_> = (1..=3)
+        .flat_map(|page| page_of(&index, "zebra giraffe", None, page).hits)
+        .collect();
+    let lines = |id: &str| both.iter().find(|h| h.id == id).map(|h| h.observations.len());
     assert_eq!(lines("common/Note 1"), Some(2));
     assert_eq!(lines("common/Note 2"), Some(1));
     assert_eq!(lines("common/Note 3"), Some(0));
@@ -1173,5 +1186,346 @@ fn the_batched_observation_query_keeps_its_fast_plan() {
         plan.iter()
             .any(|step| step.contains("SCAN observations_fts VIRTUAL TABLE")),
         "the plan changed: re-measure the 10k numbers: {plan:?}"
+    );
+}
+
+// Some of the words (doc 07 §4.2, doc 05 §3.7).
+
+const SEPARATOR: &str = "Notes with only some of the words:";
+
+/// `count` notes `{ns}/{prefix}{i}` that hold both `a` and `b`.
+fn both(ns: &str, prefix: &str, count: usize, a: &str, b: &str) -> Vec<(String, String)> {
+    (0..count)
+        .map(|i| {
+            (
+                format!("{ns}/{prefix}{i:02}.md"),
+                format!("# {prefix}{i:02}\n\nSummary {i}.\n\nText with {a} and {b} together.\n"),
+            )
+        })
+        .collect()
+}
+
+/// `count` notes `{ns}/{prefix}{i}` that hold only `term`.
+fn only(ns: &str, prefix: &str, count: usize, term: &str) -> Vec<(String, String)> {
+    (0..count)
+        .map(|i| {
+            (
+                format!("{ns}/{prefix}{i:02}.md"),
+                format!("# {prefix}{i:02}\n\nSummary {i}.\n\nText with {term} alone.\n"),
+            )
+        })
+        .collect()
+}
+
+/// Fewer than 5 notes with every word: they come first, then the separator, then the notes with only some words,
+/// numbered on from the last hit, until page 1 holds 5 hits.
+#[test]
+fn fewer_than_five_all_word_hits_get_the_fill() {
+    let mut files = both("common", "All", 2, "zebra", "giraffe");
+    files.extend(only("common", "Some", 12, "zebra"));
+    let v = vault_of(&files);
+    let index = v.index();
+    let page = page_of(&index, "zebra giraffe", None, 1);
+    assert_eq!(page.hits.len(), 5);
+    assert_eq!(page.fill_start, Some(2));
+    let text = search::render(&page);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].starts_with("1. common/All"), "{text}");
+    assert!(
+        lines[2].starts_with("   - ") || lines[2].starts_with("2. common/All"),
+        "{text}"
+    );
+    let at = lines.iter().position(|l| *l == SEPARATOR).expect(&text);
+    assert!(lines[at + 1].starts_with("3. common/Some"), "{text}");
+    assert!(text.contains("\n5. common/Some"), "{text}");
+    assert!(!text.contains("\n6. "), "{text}");
+    // The fill is the last thing: no "more" line, no page 2.
+    assert!(!text.contains("more: page"), "{text}");
+    assert_eq!(text.matches(SEPARATOR).count(), 1);
+    // The all-word hits stand above the separator, the fill below it.
+    assert!(text.find("common/All00").unwrap() < text.find(SEPARATOR).unwrap());
+    assert!(text.find("common/All01").unwrap() < text.find(SEPARATOR).unwrap());
+    assert!(text.find(SEPARATOR).unwrap() < text.find("common/Some").unwrap());
+}
+
+/// The doc 05 §3.7 case: the fill is a block of its own with exact text.
+#[test]
+fn the_fill_block_line_for_line() {
+    let v = TestVault::new(&[
+        ("common/Both.md", "# Both\n\nHas both.\n\nZebra and giraffe.\n"),
+        (
+            "common/Half.md",
+            "# Half\n\nHas one.\n\n- [fact] Only the zebra is here\n",
+        ),
+    ]);
+    let index = v.index();
+    assert_eq!(
+        run(&index, "zebra giraffe", None, 1),
+        "1. common/Both\n\
+         \x20  Has both.\n\
+         Notes with only some of the words:\n\
+         2. common/Half\n\
+         \x20  Has one.\n\
+         \x20  - [fact] Only the zebra is here\n"
+    );
+}
+
+/// No note holds every word: the separator is the page's first line.
+#[test]
+fn without_all_word_hits_the_separator_is_the_first_line() {
+    let v = vault_of(&only("common", "Some", 3, "zebra"));
+    let index = v.index();
+    let page = page_of(&index, "zebra giraffe", None, 1);
+    assert_eq!(page.fill_start, Some(0));
+    let text = search::render(&page);
+    let mut lines = text.lines();
+    assert_eq!(lines.next(), Some(SEPARATOR), "{text}");
+    assert!(lines.next().unwrap().starts_with("1. common/Some"), "{text}");
+    assert_eq!(page.hits.len(), 3);
+}
+
+/// Five or more notes with every word fill page 1 on their own: no fill, no separator, even though more notes hold
+/// some of the words. All-words hits are never cut; the rest pages as usual.
+#[test]
+fn five_or_more_all_word_hits_get_no_fill() {
+    for count in [5, 8, 12] {
+        let mut files = both("common", "All", count, "zebra", "giraffe");
+        files.extend(only("common", "Some", 5, "zebra"));
+        let v = vault_of(&files);
+        let index = v.index();
+        let page = page_of(&index, "zebra giraffe", None, 1);
+        assert_eq!(page.hits.len(), 5);
+        assert_eq!(page.more, count - 5);
+        assert_eq!(page.fill_start, None);
+        assert!(page.hits.iter().all(|h| h.id.starts_with("common/All")));
+        let text = search::render(&page);
+        assert!(!text.contains(SEPARATOR), "{text}");
+        // Every page of the query is all-words hits.
+        let last = count.div_ceil(5);
+        for n in 2..=last {
+            let text = run(&index, "zebra giraffe", None, n);
+            assert!(!text.contains(SEPARATOR), "{text}");
+            assert!(text.starts_with(&format!("{}. common/All", (n - 1) * 5 + 1)), "{text}");
+        }
+    }
+    // Four is the most that gets a fill: one note is added.
+    let mut files = both("common", "All", 4, "zebra", "giraffe");
+    files.extend(only("common", "Some", 5, "zebra"));
+    let v = vault_of(&files);
+    let index = v.index();
+    let page = page_of(&index, "zebra giraffe", None, 1);
+    assert_eq!((page.hits.len(), page.fill_start, page.more), (5, Some(4), 0));
+}
+
+/// A one-word query gets no fill: the OR query is the same query. A quoted phrase is one part and gets none either.
+#[test]
+fn a_one_word_query_gets_no_fill() {
+    let v = TestVault::new(&[
+        ("common/Zebra.md", "# Zebra\n\nStripes.\n"),
+        ("common/Other.md", "# Other\n\nZebra crossing by the giraffe.\n"),
+        ("common/Third.md", "# Third\n\nA zebra and a crossing.\n"),
+    ]);
+    let index = v.index();
+    for query in ["zebra", "\"zebra crossing\"", "cost-of-zebra"] {
+        let page = page_of(&index, query, None, 1);
+        assert_eq!(page.fill_start, None, "{query}");
+        assert!(!search::render(&page).contains(SEPARATOR), "{query}");
+    }
+    assert_eq!(page_of(&index, "zebra", None, 1).hits.len(), 3);
+    assert_eq!(page_of(&index, "\"zebra crossing\"", None, 1).hits.len(), 1);
+}
+
+/// Not even one word matches: the no-hits line alone, with no hint, on every page number.
+#[test]
+fn no_word_matches_at_all() {
+    let v = TestVault::new(&[("common/Live.md", "# Live\n\nMarker zebra.\n")]);
+    let index = v.index();
+    for page in [1, 2, 5] {
+        assert_eq!(
+            run(&index, "unicorn narwhal", None, page),
+            "No notes match \"unicorn narwhal\".\n"
+        );
+    }
+}
+
+/// The fill never adds a "more" line or a page 2. A page past the end counts every result, fill included, as one page.
+#[test]
+fn the_fill_adds_no_page_two() {
+    let mut files = both("common", "All", 3, "zebra", "giraffe");
+    files.extend(only("common", "Some", 30, "zebra"));
+    let v = vault_of(&files);
+    let index = v.index();
+    let text = run(&index, "zebra giraffe", None, 1);
+    assert!(!text.contains("more"), "{text}");
+    assert_eq!(text.lines().filter(|l| l.contains(". common/")).count(), 5);
+    assert_eq!(
+        run(&index, "zebra giraffe", None, 2),
+        "Page 2 is past the end: 5 results on 1 page.\n"
+    );
+    assert_eq!(
+        run(&index, "zebra giraffe", None, 4),
+        "Page 4 is past the end: 5 results on 1 page.\n"
+    );
+    // A fill that does not fill the page: the results are the hits and the fill.
+    let v = TestVault::new(&[
+        ("common/Both.md", "# Both\n\nZebra giraffe.\n"),
+        ("common/Half.md", "# Half\n\nZebra.\n"),
+    ]);
+    let index = v.index();
+    assert_eq!(
+        run(&index, "zebra giraffe", None, 2),
+        "Page 2 is past the end: 2 results on 1 page.\n"
+    );
+    // A query with only a fill still has its results on page 2: it is past the end, not "no notes match".
+    let v = vault_of(&only("common", "Some", 3, "zebra"));
+    let index = v.index();
+    assert_eq!(
+        run(&index, "zebra giraffe", None, 2),
+        "Page 2 is past the end: 3 results on 1 page.\n"
+    );
+}
+
+/// The `ns` boost orders the fill among themselves, as it does the hits.
+#[test]
+fn the_ns_boost_orders_the_fill() {
+    // Same text, so the same BM25 score; the note in `focus` must win with the boost, and lose the tie without it.
+    let v = TestVault::new(&[
+        ("common/Both.md", "# Both\n\nZebra giraffe.\n"),
+        ("alpha/Plain.md", "# Plain\n\nSummary.\n\nOnly zebra here.\n"),
+        ("focus/Boosted.md", "# Boosted\n\nSummary.\n\nOnly zebra here.\n"),
+    ]);
+    let index = v.index();
+    let plain = page_of(&index, "zebra giraffe", None, 1);
+    assert_eq!(ids(&plain), ["common/Both", "alpha/Plain", "focus/Boosted"]);
+    let boosted = page_of(&index, "zebra giraffe", Some("focus"), 1);
+    assert_eq!(ids(&boosted), ["common/Both", "focus/Boosted", "alpha/Plain"]);
+    assert_eq!(boosted.fill_start, Some(1));
+}
+
+/// The boost never lifts a fill hit above an all-word hit.
+#[test]
+fn the_fill_stays_below_the_all_word_hits_with_a_boost() {
+    let v = TestVault::new(&[
+        ("alpha/Both.md", "# Both\n\nZebra giraffe.\n"),
+        ("focus/Half.md", "# Half\n\nZebra zebra zebra.\n"),
+    ]);
+    let index = v.index();
+    let page = page_of(&index, "zebra giraffe", Some("focus"), 1);
+    assert_eq!(ids(&page), ["alpha/Both", "focus/Half"]);
+    assert_eq!(page.fill_start, Some(1));
+}
+
+/// Archive notes are in the fill only when `ns` is `archive`, as for the hits (doc 07 §1.1).
+#[test]
+fn the_fill_follows_the_store_rules() {
+    let v = TestVault::new(&[
+        ("common/Both.md", "# Both\n\nZebra giraffe.\n"),
+        ("archive/Old.md", "# Old\n\nZebra alone.\n"),
+    ]);
+    let index = v.index();
+    assert_eq!(ids(&page_of(&index, "zebra giraffe", None, 1)), ["common/Both"]);
+    assert_eq!(
+        ids(&page_of(&index, "zebra giraffe", Some("archive"), 1)),
+        ["common/Both", "archive/Old"]
+    );
+}
+
+/// A filled hit shows the lines that hold any word (doc 07 §4.2, "Some of the words": none holds every word).
+#[test]
+fn filled_hits_show_any_word_fact_lines() {
+    let v = TestVault::new(&[
+        (
+            "common/Both.md",
+            "# Both\n\nBoth.\n\n- [fact] Zebra and giraffe\n- [fact] Zebra alone\n",
+        ),
+        (
+            "common/Half.md",
+            "# Half\n\nHalf.\n\n- [fact] Zebra at dawn\n- [fact] Zebra at dusk\n- [fact] Unrelated\n",
+        ),
+    ]);
+    let index = v.index();
+    assert_eq!(
+        run(&index, "zebra giraffe", None, 1),
+        "1. common/Both\n\
+         \x20  Both.\n\
+         \x20  - [fact] Zebra and giraffe\n\
+         Notes with only some of the words:\n\
+         2. common/Half\n\
+         \x20  Half.\n\
+         \x20  - [fact] Zebra at dawn\n\
+         \x20  - [fact] Zebra at dusk\n"
+    );
+}
+
+/// The words of the doc's benchmark case: a note that writes "VO2max" is found by the words around it.
+#[test]
+fn some_of_the_words_finds_a_note_the_other_words_miss() {
+    let v = TestVault::new(&[(
+        "common/Fitness.md",
+        "# Fitness\n\nHow fit.\n\n- [fact] Tested VO2max in the fitness lab\n",
+    )]);
+    let index = v.index();
+    let text = run(&index, "VO2 max fitness test", None, 1);
+    assert!(text.starts_with(&format!("{SEPARATOR}\n1. common/Fitness\n")), "{text}");
+}
+
+/// The 1,000-token page budget holds with the fill and the separator counted. The summaries are long so that five
+/// hits and their fact lines cannot all fit.
+#[test]
+fn the_budget_holds_with_the_fill() {
+    let long = "word ".repeat(40);
+    let summary = "Summary ".repeat(40);
+    let mut files = Vec::new();
+    for i in 0..2 {
+        files.push((
+            format!("common/All{i}.md"),
+            format!(
+                "# All{i}\n\n{summary}{i}.\n\n- [fact] zebra giraffe {long}\n- [fact] zebra giraffe {long}\n- [fact] zebra giraffe {long}\n"
+            ),
+        ));
+    }
+    for i in 0..12 {
+        files.push((
+            format!("common/Some{i:02}.md"),
+            format!(
+                "# Some{i:02}\n\n{summary}{i}.\n\n- [fact] zebra {long}\n- [fact] zebra {long}\n- [fact] zebra {long}\n"
+            ),
+        ));
+    }
+    let v = vault_of(&files);
+    let index = v.index();
+    let page = page_of(&index, "zebra giraffe", None, 1);
+    assert_eq!(page.hits.len(), 5);
+    let text = search::render(&page);
+    assert!(
+        tokens_of(&text) <= search::PAGE_TOKEN_BUDGET,
+        "{} tokens",
+        tokens_of(&text)
+    );
+    // Every hit keeps its id, and the separator stays, however many fact lines were dropped.
+    assert_eq!(text.lines().filter(|l| l.contains(". common/")).count(), 5);
+    assert!(text.contains(SEPARATOR));
+    let facts = text.lines().filter(|l| l.starts_with("   - [fact]")).count();
+    assert!(facts < 15, "{facts} fact lines should not all fit");
+}
+
+/// The fill reaches the CLI as the same text.
+#[test]
+fn the_fill_through_the_cli() {
+    let v = TestVault::new(&[
+        ("common/Both.md", "# Both\n\nHas both.\n\nZebra and giraffe.\n"),
+        ("common/Half.md", "# Half\n\nHas one.\n\nZebra only.\n"),
+    ]);
+    let out = Command::new(env!("CARGO_BIN_EXE_recognitor"))
+        .args(["search", "zebra giraffe", "--vault"])
+        .arg(&v.root)
+        .env("RECOGNITOR_DB", &v.db)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        text.contains("\nNotes with only some of the words:\n2. common/Half\n"),
+        "{text}"
     );
 }

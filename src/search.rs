@@ -10,8 +10,8 @@ use rusqlite::{Connection, params};
 use crate::error::{Error, Result};
 use crate::paths::{note_id, titled_id};
 
-/// Hits per page (doc 07 §4.2).
-pub const PAGE_SIZE: usize = 10;
+/// Hits per page (doc 07 §4.2). A tuning parameter, set with the retrieval benchmark; it is also the size of the fill.
+pub const PAGE_SIZE: usize = 5;
 /// Candidates fetched before the `ns` boost and paging (doc 05 §3.7: `LIMIT 50`). The hits of one query never exceed
 /// this number, so the "N more" count is capped by it too.
 pub const CANDIDATES: usize = 50;
@@ -29,6 +29,9 @@ pub const PAGE_TOKEN_BUDGET: usize = 1000;
 
 /// PLACEHOLDER: as [`NS_BOOST`], for a note outside `ns` that a note in `ns` links to.
 pub const LINKED_BOOST: f64 = 0.25;
+
+/// The line before the hits that match only some of the words (doc 07 §4.2, "Some of the words").
+pub const FILL_SEPARATOR: &str = "Notes with only some of the words:";
 
 /// One observation line under a hit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,8 +70,10 @@ pub struct SearchPage {
     pub matches: Option<usize>,
     /// The query as given, without its own `"` characters and trimmed: the no-hits line quotes it.
     pub query: String,
-    /// Words in the query, a quoted phrase counting each of its words.
-    pub words: usize,
+    /// Where the fill starts in `hits` (doc 07 §4.2, "Some of the words"): the hits from this index on match only
+    /// some of the words, and the line `Notes with only some of the words:` stands before them. `None` when the page
+    /// has no fill. The fill belongs to page 1 only.
+    pub fill_start: Option<usize>,
 }
 
 struct Candidate {
@@ -113,10 +118,25 @@ pub fn search_with_page_size(
     } else {
         None
     };
-    if let Some(ns_key) = &ns_key {
-        boost(conn, &mut candidates, ns_key)?;
+    rank_by_score(conn, &mut candidates, ns_key.as_deref())?;
+
+    // Some of the words (doc 07 §4.2, doc 05 §3.7): fewer notes than a page match every word, and the query has
+    // more than one part (`any_expr` is `None` for one), so the notes that match any word and are not hits yet fill the
+    // page. They are ranked the same way among themselves and stand after every note with all the words.
+    let all_count = candidates.len();
+    if all_count < page_size
+        && let Some(any) = &any_expr
+    {
+        let have: HashSet<String> = candidates.iter().map(|c| c.key.clone()).collect();
+        let mut fill = self::candidates(conn, any, ns_key.as_deref())?;
+        fill.retain(|c| !have.contains(&c.key));
+        rank_by_score(conn, &mut fill, ns_key.as_deref())?;
+        fill.truncate(page_size - all_count);
+        candidates.extend(fill);
     }
-    candidates.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.key.cmp(&b.key)));
+    // The fill only completes page 1: `total` is at most one page whenever there is a fill, so there is never a "more"
+    // line or a page 2.
+    let fill_start = (page == 1 && candidates.len() > all_count).then_some(all_count);
 
     let total = candidates.len();
     let start = ((page - 1) * page_size).min(total);
@@ -142,8 +162,17 @@ pub fn search_with_page_size(
         page_size,
         matches,
         query: query.replace('"', "").trim().to_string(),
-        words: parts.iter().map(|p| p.split_whitespace().count().max(1)).sum(),
+        fill_start,
     })
+}
+
+/// The `ns` boost, then the order of a page: best score first, ties by key.
+fn rank_by_score(conn: &Connection, candidates: &mut [Candidate], ns_key: Option<&str>) -> Result<()> {
+    if let Some(ns_key) = ns_key {
+        boost(conn, candidates, ns_key)?;
+    }
+    candidates.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.key.cmp(&b.key)));
+    Ok(())
 }
 
 /// Turns the agent's text into an FTS5 `MATCH` expression (doc 07 §4, "Query text"): every word in double quotes, a
@@ -492,12 +521,7 @@ fn fact_line(o: &ObservationLine) -> String {
 /// [`PAGE_TOKEN_BUDGET`]; once one does not fit, no more are added.
 pub fn render(page: &SearchPage) -> String {
     if page.total == 0 {
-        let hint = if page.words > 1 {
-            " Every word must match; try fewer words."
-        } else {
-            ""
-        };
-        return format!("No notes match \"{}\".{hint}\n", page.query);
+        return format!("No notes match \"{}\".\n", page.query);
     }
     let kept = page.matches.map(|all| {
         format!("Only the best {CANDIDATES} of {all} matches are kept; narrow the query to reach the rest.")
@@ -542,10 +566,21 @@ pub fn render(page: &SearchPage) -> String {
         (false, None) => String::new(),
     };
 
-    let mut used = heads.iter().map(|h| h.chars().count()).sum::<usize>() + closing.chars().count();
+    let separator = page.fill_start.map(|_| {
+        format!(
+            "{FILL_SEPARATOR}
+"
+        )
+    });
+    let mut used = heads.iter().map(|h| h.chars().count()).sum::<usize>()
+        + closing.chars().count()
+        + separator.as_ref().map_or(0, |s| s.chars().count());
     let mut full = false;
     let mut out = String::new();
-    for (head, hit) in heads.iter().zip(&page.hits) {
+    for (i, (head, hit)) in heads.iter().zip(&page.hits).enumerate() {
+        if let Some(separator) = separator.as_ref().filter(|_| page.fill_start == Some(i)) {
+            out.push_str(separator);
+        }
         out.push_str(head);
         for o in &hit.observations {
             if full {

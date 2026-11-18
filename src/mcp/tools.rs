@@ -65,7 +65,7 @@ pub const TOOLS: [Tool; 5] = [
     },
     Tool {
         name: "search",
-        description: "Full-text search. Returns ids, summaries and matching facts, 10 per page. Every word must match, with no operators. `ns` ranks that namespace first without filtering; `ns: \"archive\"` also searches session records.",
+        description: "Full-text search. Returns ids, summaries and matching facts, 5 per page. Notes with every word come first; when fewer than 5 do, notes with only some of the words fill the first page. No operators. `ns` ranks that namespace first without filtering; `ns: \"archive\"` also searches session records.",
         args: &[
             Arg {
                 name: "query",
