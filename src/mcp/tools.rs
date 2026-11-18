@@ -10,6 +10,7 @@ use serde_json::{Map, Value, json};
 
 use crate::bootstrap::DEFAULT_MAX_TOKENS as BOOTSTRAP_DEFAULT_MAX_TOKENS;
 use crate::config;
+use crate::edit_note::{EditNote, Op};
 use crate::read::DEFAULT_MAX_TOKENS as READ_DEFAULT_MAX_TOKENS;
 use crate::write_note::WriteNote;
 use crate::{Error, Index};
@@ -49,8 +50,8 @@ pub struct Tool {
 
 const PAGE_NUMBER: &str = "the number from the \"page N\" line";
 
-/// The tools, in the order of doc 07 §2.1: `write_note` and `relink` are the write tools so far.
-pub const TOOLS: [Tool; 7] = [
+/// The tools, in the order of doc 07 §2.1: `write_note`, `edit_note` and `relink` are the write tools so far.
+pub const TOOLS: [Tool; 8] = [
     Tool {
         name: "load_bootstrap",
         description: "Load the user's standing instructions: who they are, how to answer, rules for every project. Call once at session start, unless a hook already added them.",
@@ -151,6 +152,48 @@ pub const TOOLS: [Tool; 7] = [
             Arg {
                 name: "expected_checksum",
                 description: "the checksum of the version it replaces",
+                kind: Kind::Text,
+                required: false,
+            },
+        ],
+    },
+    Tool {
+        name: "edit_note",
+        description: "Change part of a note without rewriting it. `append` adds text at the end of a section, `add_observation` and `add_relation` add one line, `find_replace` replaces text that occurs exactly once, `replace_section` replaces a section and needs its checksum from `read_note`.",
+        args: &[
+            Arg {
+                name: "note",
+                description: "an id, path or name",
+                kind: Kind::Text,
+                required: true,
+            },
+            Arg {
+                name: "op",
+                description: "one of the five",
+                kind: Kind::Text,
+                required: true,
+            },
+            Arg {
+                name: "text",
+                description: "the text to add, the line, the replacement or the new section",
+                kind: Kind::Text,
+                required: false,
+            },
+            Arg {
+                name: "section",
+                description: "heading text, for `append` and `replace_section`",
+                kind: Kind::Text,
+                required: false,
+            },
+            Arg {
+                name: "find",
+                description: "the exact text to replace, for `find_replace`",
+                kind: Kind::Text,
+                required: false,
+            },
+            Arg {
+                name: "expected_checksum",
+                description: "the section's checksum, for `replace_section`",
                 kind: Kind::Text,
                 required: false,
             },
@@ -292,6 +335,7 @@ fn missing_message(tool: &Tool, arg: &Arg) -> String {
         "query" => "a query".to_string(),
         "note" => "a note".to_string(),
         "path" => "a path".to_string(),
+        "op" => "an op".to_string(),
         other => other.to_string(),
     };
     format!("{} needs {what}", tool.name)
@@ -302,6 +346,76 @@ fn wrong_type_message(arg: &Arg) -> String {
         Kind::Page => format!("{} needs a number from 1", arg.name),
         Kind::Text => format!("{} needs text", arg.name),
         Kind::TextList => format!("{} needs a list of text", arg.name),
+    }
+}
+
+/// The ops of `edit_note` and the arguments each takes besides `note` and `op` (doc 07 §2.1, §9).
+const EDIT_OPS: [(&str, &[&str]); 5] = [
+    ("append", &["text", "section"]),
+    ("add_observation", &["text"]),
+    ("add_relation", &["text"]),
+    ("find_replace", &["find", "text"]),
+    ("replace_section", &["section", "text", "expected_checksum"]),
+];
+
+/// Reads the op of an `edit_note` call and the arguments it takes. An argument the op does not take is an error, as an
+/// unknown argument is (doc 07 §2.1): `section` with `add_observation` would otherwise be ignored and the line would
+/// land somewhere the agent did not mean. An empty text or a null passes for "not given" there, because models fill
+/// optional arguments with empty strings. A missing argument reads `edit_note needs <what>`.
+fn edit_op(args: &Args<'_>) -> Result<Op, String> {
+    let name = args.required_text("op")?;
+    let Some((_, takes)) = EDIT_OPS.iter().find(|(op, _)| *op == name) else {
+        let all: Vec<&str> = EDIT_OPS.iter().map(|(op, _)| *op).collect();
+        return Err(format!("op needs one of {}", all.join(", ")));
+    };
+    for key in ["text", "section", "find", "expected_checksum"] {
+        let given = args.text(key).is_some_and(|v| !v.is_empty());
+        if given && !takes.contains(&key) {
+            return Err(format!("unexpected argument: {key}"));
+        }
+    }
+    // Present and not empty: for the arguments an op cannot do without.
+    let needed = |key: &str| {
+        args.text(key)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| format!("edit_note needs {key}"))
+    };
+    // Present, possibly empty: `find_replace` and `replace_section` delete with an empty `text`.
+    let present = |key: &str| {
+        args.text(key)
+            .map(str::to_string)
+            .ok_or_else(|| format!("edit_note needs {key}"))
+    };
+    Ok(match name {
+        "append" => Op::Append {
+            section: args.text("section").filter(|v| !v.is_empty()).map(str::to_string),
+            text: nonblank(needed("text")?)?,
+        },
+        "add_observation" => Op::AddObservation {
+            text: nonblank(needed("text")?)?,
+        },
+        "add_relation" => Op::AddRelation {
+            text: nonblank(needed("text")?)?,
+        },
+        "find_replace" => Op::FindReplace {
+            find: needed("find")?,
+            text: present("text")?,
+        },
+        _ => Op::ReplaceSection {
+            section: needed("section")?,
+            expected_checksum: needed("expected_checksum")?,
+            text: present("text")?,
+        },
+    })
+}
+
+/// Text that is only whitespace is no text: `edit_note needs text`.
+fn nonblank(text: String) -> Result<String, String> {
+    if text.trim().is_empty() {
+        Err("edit_note needs text".to_string())
+    } else {
+        Ok(text)
     }
 }
 
@@ -351,6 +465,18 @@ pub fn call(index: &mut Index, config_file: &Path, name: &str, arguments: &Map<S
                     // Doc 07 §2.1: a refusal is an error, so it never passes for a success.
                     WriteNote::Refused(text) => Err(text),
                     done => Ok(crate::write_note::render(&done)),
+                }
+            }
+            "edit_note" => {
+                let note = args.required_text("note")?;
+                let op = edit_op(&args)?;
+                let max_tokens = config::read_max_tokens(config_file)
+                    .map_err(failed)?
+                    .unwrap_or(READ_DEFAULT_MAX_TOKENS);
+                match index.edit_note(note, &op, max_tokens).map_err(failed)? {
+                    // Doc 07 §2.1: a refusal is an error, so it never passes for a success.
+                    EditNote::Refused(text) => Err(text),
+                    done => Ok(crate::edit_note::render(&done)),
                 }
             }
             "relink" => {

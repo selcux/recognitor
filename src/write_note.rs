@@ -258,8 +258,17 @@ fn twins_refusal(paths: &[String]) -> WriteNote {
 fn current_refusal(root: &Path, rel: &str, reason: &str, max_tokens: usize) -> Result<WriteNote> {
     let abs = root.join(rel);
     let bytes = fs::read(&abs).map_err(|e| Error::io(&abs, e))?;
-    let current = read::render(&read::read_file(rel, &bytes, max_tokens));
-    Ok(WriteNote::Refused(format!("{reason} Current version:\n{current}")))
+    Ok(WriteNote::Refused(with_current(reason, rel, &bytes, max_tokens)))
+}
+
+/// The text of a refusal that returns the whole note: the reason, then the note as `read_note` shows it (doc 07
+/// §5.3, "Cut like a read"). `bytes` are the file as it is on disk now.
+pub(crate) fn with_current(reason: &str, rel: &str, bytes: &[u8], max_tokens: usize) -> String {
+    format!(
+        "{reason} Current version:
+{}",
+        read::render(&read::read_file(rel, bytes, max_tokens))
+    )
 }
 
 fn write_note(

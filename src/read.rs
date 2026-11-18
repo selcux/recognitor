@@ -108,18 +108,77 @@ pub fn read(
 /// (doc 07 §5.3). The file may be one the index does not know yet, so the title comes from the text, as the indexer
 /// takes it (the first heading, else the filename). `rel` is the vault-relative path as named on disk.
 pub(crate) fn read_file(rel: &str, bytes: &[u8], max_tokens: usize) -> Read {
-    let id = note_id(rel).to_string();
     let text = String::from_utf8_lossy(bytes).into_owned();
+    let ctx = file_ctx(rel, &text, max_tokens);
+    ctx.note(bytes, &outline(&text))
+}
+
+/// One section of a note read from the bytes of its file, as `read_note` returns it (doc 07 §7.3): what a rejected
+/// `replace_section` returns (doc 07 §5.3). Fails like `read_note` when `wanted` names no heading.
+pub(crate) fn read_file_section(rel: &str, bytes: &[u8], wanted: &str, max_tokens: usize) -> Result<Read> {
+    let text = String::from_utf8_lossy(bytes).into_owned();
+    let ctx = file_ctx(rel, &text, max_tokens);
+    ctx.section(&outline(&text), wanted)
+}
+
+/// The note's id as every output shows it (doc 07 §4.2): the id, and the title when it differs from the filename.
+pub(crate) fn titled_id_of(rel: &str, text: &str) -> String {
+    file_ctx(rel, text, 0).titled()
+}
+
+/// The sections `wanted` names, by the matching of doc 07 §7.3.
+pub(crate) enum Picked<'a> {
+    /// One heading, as the chain of sections from a top-level one down to it.
+    One(Vec<&'a Section>),
+    /// Several headings: their paths, for the agent to call again with one.
+    Several(Vec<String>),
+}
+
+/// Finds the heading `wanted` names in `outline` (doc 07 §7.3, "Matching"). `titled` is the note's id as doc 07 §4.2
+/// shows it. No match is the error that lists the note's top-level sections.
+pub(crate) fn pick_section<'a>(outline: &'a Outline, titled: &str, wanted: &str) -> Result<Picked<'a>> {
+    let mut found = find_sections(&outline.sections, wanted);
+    match found.len() {
+        0 => Err(Error::NoSection {
+            note: titled.to_string(),
+            name: wanted.to_string(),
+            sections: outline.sections.iter().map(|s| s.display.clone()).collect(),
+        }),
+        1 => Ok(Picked::One(found.remove(0))),
+        _ => Ok(Picked::Several(found.iter().map(|c| path_of(c)).collect())),
+    }
+}
+
+/// The text of a call whose `section` matched several headings (doc 07 §7.3), for a tool that names one.
+pub(crate) fn sections_text(titled: &str, wanted: &str, paths: &[String]) -> String {
+    render(&Read::Sections {
+        note: titled.to_string(),
+        name: wanted.to_string(),
+        paths: paths.to_vec(),
+    })
+}
+
+/// The path of a picked section as `section` takes it back (`Storage > Write lock`).
+pub(crate) fn section_path(chain: &[&Section]) -> String {
+    path_of(chain)
+}
+
+/// The first 12 hex characters of the checksum of a section's bytes (doc 07 §7.3).
+pub(crate) fn section_checksum(text: &str, section: &Section) -> String {
+    sha256_prefix(&text.as_bytes()[section.start..section.end], CHECKSUM_LEN)
+}
+
+fn file_ctx<'a>(rel: &str, text: &'a str, max_tokens: usize) -> Ctx<'a> {
+    let id = note_id(rel).to_string();
     let stem = file_stem(&id).to_lowercase();
-    let title = parse_note(&text).title.filter(|t| t.to_lowercase() != stem);
-    let ctx = Ctx {
+    let title = parse_note(text).title.filter(|t| t.to_lowercase() != stem);
+    Ctx {
         id,
         title,
-        text: &text,
+        text,
         limit: max_tokens,
         query: None,
-    };
-    ctx.note(bytes, &outline(&text))
+    }
 }
 
 struct Ctx<'a> {

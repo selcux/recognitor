@@ -333,6 +333,7 @@ fn tools_list_has_the_read_tools_and_the_write_tools() {
             "context",
             "read_note",
             "write_note",
+            "edit_note",
             "relink"
         ]
     );
@@ -568,6 +569,214 @@ notice: bootstrap/Extra loads as instructions at session start
     // The CLI has no write command (doc 07 §12): its text is a bad argument.
     assert_eq!(v.cli(&["write_note", "ops/X", "x"]).status.code(), Some(2));
     assert_eq!(v.cli(&["write", "ops/X", "x"]).status.code(), Some(2));
+}
+
+// `edit_note` (doc 07 §9): MCP only, the CLI has no edit command (§12).
+
+#[test]
+fn edit_note_checks_its_arguments_and_runs_every_op_over_mcp() {
+    let v = vault();
+    let mut server = v.server();
+    let list = server.list_tools();
+    let schema = list["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "edit_note")
+        .unwrap()["inputSchema"]
+        .clone();
+    assert_eq!(schema["required"], json!(["note", "op"]));
+    assert_eq!(
+        schema["properties"].as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["note", "op", "text", "section", "find", "expected_checksum"]
+    );
+    // Missing arguments follow `<tool> needs <what>`; an argument the op does not take is unexpected.
+    assert_eq!(server.err("edit_note", json!({})), "edit_note needs a note");
+    assert_eq!(
+        server.err("edit_note", json!({"note": "ops/Caching"})),
+        "edit_note needs an op"
+    );
+    assert_eq!(
+        server.err(
+            "edit_note",
+            json!({"note": "ops/Caching", "op": "prepend", "text": "x"})
+        ),
+        "op needs one of append, add_observation, add_relation, find_replace, replace_section"
+    );
+    assert_eq!(
+        server.err("edit_note", json!({"note": "ops/Caching", "op": "append"})),
+        "edit_note needs text"
+    );
+    assert_eq!(
+        server.err(
+            "edit_note",
+            json!({"note": "ops/Caching", "op": "append", "text": "  \n"})
+        ),
+        "edit_note needs text"
+    );
+    assert_eq!(
+        server.err(
+            "edit_note",
+            json!({"note": "ops/Caching", "op": "find_replace", "text": "x"})
+        ),
+        "edit_note needs find"
+    );
+    assert_eq!(
+        server.err(
+            "edit_note",
+            json!({"note": "ops/Caching", "op": "find_replace", "find": "x"})
+        ),
+        "edit_note needs text"
+    );
+    assert_eq!(
+        server.err(
+            "edit_note",
+            json!({"note": "ops/Caching", "op": "replace_section", "text": ""})
+        ),
+        "edit_note needs section"
+    );
+    assert_eq!(
+        server.err(
+            "edit_note",
+            json!({"note": "ops/Caching", "op": "replace_section", "section": "A", "text": ""})
+        ),
+        "edit_note needs expected_checksum"
+    );
+    assert_eq!(
+        server.err(
+            "edit_note",
+            json!({"note": "ops/Caching", "op": "append", "text": "x", "find": "y"})
+        ),
+        "unexpected argument: find"
+    );
+    assert_eq!(
+        server.err(
+            "edit_note",
+            json!({"note": "ops/Caching", "op": "add_observation", "text": "[fact] x", "section": "A"})
+        ),
+        "unexpected argument: section"
+    );
+    assert_eq!(
+        server.err(
+            "edit_note",
+            json!({"note": "ops/Caching", "op": "append", "text": "x", "page": 2})
+        ),
+        "unexpected argument: page"
+    );
+    assert_eq!(
+        server.err("edit_note", json!({"note": "ops/Caching", "op": "append", "text": 5})),
+        "text needs text"
+    );
+    // Empty strings in arguments an op does not take count as not given.
+    let note = "# Caching\n\nA cache keeps answers close.\n";
+    let mut expected = format!("{note}\nMore.\n");
+    assert_eq!(
+        server.ok(
+            "edit_note",
+            json!({"note": "ops/Caching", "op": "append", "text": "More.", "find": "", "section": "", "expected_checksum": ""})
+        ),
+        format!("ops/Caching  checksum: {}\n", recognitor::hash::sha256_prefix(expected.as_bytes(), 12))
+    );
+    assert_eq!(fs::read_to_string(v.root.join("ops/Caching.md")).unwrap(), expected);
+
+    // Each op, with a refusal in the same call as an error result.
+    expected.push_str("\n## Observations\n- [fact] Fast.\n");
+    server.ok(
+        "edit_note",
+        json!({"note": "ops/Caching", "op": "add_observation", "text": "[fact] Fast."}),
+    );
+    assert_eq!(fs::read_to_string(v.root.join("ops/Caching.md")).unwrap(), expected);
+    let already = server.ok(
+        "edit_note",
+        json!({"note": "ops/Caching", "op": "add_observation", "text": "[fact] Fast."}),
+    );
+    assert!(
+        already.starts_with("Already there, nothing was written.\nops/Caching  checksum: "),
+        "{already}"
+    );
+    let bad = server.err(
+        "edit_note",
+        json!({"note": "ops/Caching", "op": "add_relation", "text": "see also [[X]]"}),
+    );
+    assert!(
+        bad.starts_with("That is not a typed relation line, so nothing was written."),
+        "{bad}"
+    );
+    server.ok(
+        "edit_note",
+        json!({"note": "ops/Caching", "op": "add_relation", "text": "relates_to [[Release]]"}),
+    );
+    server.ok(
+        "edit_note",
+        json!({"note": "ops/Caching", "op": "find_replace", "find": "close.", "text": "near."}),
+    );
+    let refused = server.err(
+        "edit_note",
+        json!({"note": "ops/Caching", "op": "find_replace", "find": "zzz", "text": "y"}),
+    );
+    assert!(
+        refused.starts_with(
+            "The text to replace was not found, so nothing was written. Current version:\nops/Caching  checksum: "
+        ),
+        "{refused}"
+    );
+    // The section checksum comes from read_note and goes back in.
+    let read = server.ok("read_note", json!({"note": "ops/Caching", "section": "Observations"}));
+    let checksum = read
+        .split("checksum: ")
+        .nth(1)
+        .unwrap()
+        .split('\n')
+        .next()
+        .unwrap()
+        .to_string();
+    let stale = server.err("edit_note", json!({"note": "ops/Caching", "op": "replace_section", "section": "Observations", "expected_checksum": "000000000000", "text": "## Observations
+- [fact] x"}));
+    assert!(stale.starts_with("The section changed since that checksum, so nothing was written. Current version:\nops/Caching > Observations  checksum: "), "{stale}");
+    server.ok("edit_note", json!({"note": "ops/Caching", "op": "replace_section", "section": "Observations", "expected_checksum": checksum, "text": "## Observations\n- [fact] Faster."}));
+    let file = fs::read_to_string(v.root.join("ops/Caching.md")).unwrap();
+    assert!(
+        file.contains("- [fact] Faster.\n") && !file.contains("- [fact] Fast.\n"),
+        "{file}"
+    );
+    // Several matches, several notes, no note.
+    let several = server.ok("edit_note", json!({"note": "Caching", "op": "append", "text": "x"}));
+    assert!(
+        several.starts_with("\"Caching\" matches 2 notes. Call again with one id:\n"),
+        "{several}"
+    );
+    assert_eq!(
+        server.err("edit_note", json!({"note": "ops/Nope", "op": "append", "text": "x"})),
+        "\"ops/Nope\" not found"
+    );
+    // The bootstrap notice and the archive.
+    let boot = server.ok(
+        "edit_note",
+        json!({"note": "bootstrap/Profile", "op": "append", "text": "More."}),
+    );
+    assert!(
+        boot.ends_with("notice: bootstrap/Profile loads as instructions at session start\n"),
+        "{boot}"
+    );
+    assert!(
+        server
+            .ok(
+                "edit_note",
+                json!({"note": "archive/2026-11-01 session", "op": "append", "text": "Later."})
+            )
+            .starts_with("archive/2026-11-01 session  checksum: ")
+    );
+    assert_eq!(
+        server.err(
+            "edit_note",
+            json!({"note": "archive/2026-11-01 session", "op": "find_replace", "find": "caching", "text": "x"})
+        ),
+        "Archive notes are append only: use append to add to one."
+    );
+    drop(server);
+    // The CLI has no edit command (doc 07 §12): a bad argument.
+    assert_eq!(v.cli(&["edit_note", "ops/Caching"]).status.code(), Some(2));
+    assert_eq!(v.cli(&["edit", "ops/Caching"]).status.code(), Some(2));
 }
 
 #[test]
@@ -998,7 +1207,7 @@ fn a_vault_without_a_bootstrap_is_an_error_without_the_prefix() {
 fn an_unknown_tool_is_a_protocol_error() {
     let v = vault();
     let mut server = v.server();
-    let response = server.request_raw("tools/call", json!({"name": "edit_note", "arguments": {}}));
+    let response = server.request_raw("tools/call", json!({"name": "no_such_tool", "arguments": {}}));
     // Doc 07 §2.1, "Unknown tool": a JSON-RPC error, -32602, and no tool result.
     assert_eq!(response["error"]["code"], json!(-32602), "{response}");
     assert!(response.get("result").is_none(), "{response}");
