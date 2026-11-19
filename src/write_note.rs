@@ -196,6 +196,7 @@ fn list(dir: &Path) -> Result<Vec<Entry>> {
             is_file: kind.is_file(),
         });
     }
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(entries)
 }
 
@@ -258,8 +259,10 @@ fn twins_refusal(paths: &[String]) -> WriteNote {
 /// The text of [`twins_refusal`]. `done` is what did not happen: `written` for a create, `moved` for a move (doc 07
 /// §5.3 gives each its own text).
 pub(crate) fn twins_text(paths: &[String], done: &str) -> String {
+    let mut sorted = paths.to_vec();
+    sorted.sort();
     let mut text = format!("Names that differ only in case cannot exist together, so nothing was {done}. On disk:\n");
-    for p in paths {
+    for p in &sorted {
         text.push_str(&format!("  {p}\n"));
     }
     text
