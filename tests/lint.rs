@@ -360,23 +360,51 @@ fn check_7_a_non_ascii_name_is_an_error_and_plain_lint_fails() {
     assert_eq!(r.summary(), "lint: 1 error, 0 warnings, 0 hints; 3 notes checked");
 }
 
-/// True when `A` and `a` are different files here (Windows and macOS usually say no).
+/// Makes the vault root a place where `A` and `a` are two files, when the platform allows it: always on Linux, per
+/// folder on Windows (`fsutil`), never on a default macOS volume. Call it on an empty vault, before the first file is
+/// written, so subfolders inherit the setting. Returns false when it cannot, and the test skips.
 fn case_sensitive(v: &TestVault) -> bool {
-    v.write("probe/a.md", "x");
-    v.write("probe/A.md", "x");
-    let n = fs::read_dir(v.root.join("probe")).unwrap().count();
-    let _ = fs::remove_dir_all(v.root.join("probe"));
-    n == 2
+    if cfg!(windows) {
+        let _ = Command::new("fsutil.exe")
+            .args(["file", "setCaseSensitiveInfo"])
+            .arg(&v.root)
+            .arg("enable")
+            .output();
+    }
+    let (a, b) = (v.root.join("probe_a"), v.root.join("PROBE_A"));
+    fs::write(&a, "1").unwrap();
+    fs::write(&b, "2").unwrap();
+    let both = fs::read_dir(&v.root).unwrap().count() == 2;
+    let _ = fs::remove_file(&a);
+    let _ = fs::remove_file(&b);
+    if !both {
+        eprintln!("skipped: this file system folds case, so two files cannot be case twins here");
+    }
+    both
 }
 
 #[test]
 fn check_7_case_twins_are_an_error_and_plain_lint_fails() {
-    let v = clean();
+    let v = TestVault::new(&[]);
     if !case_sensitive(&v) {
         return;
     }
-    v.write("design/Note.md", "# Note\n\nA.\n");
-    v.write("design/note.md", "# note\n\nB.\n");
+    v.write("bootstrap/index.md", INDEX);
+    v.write("design/index.md", INDEX);
+    v.write(
+        "design/Note.md",
+        "# Note
+
+A.
+",
+    );
+    v.write(
+        "design/note.md",
+        "# note
+
+B.
+",
+    );
     let r = v.lint();
     assert_eq!(r.code, Some(1), "{}", r.stdout);
     assert_eq!(
