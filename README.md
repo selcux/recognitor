@@ -238,11 +238,11 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 | `search`, `context`, `read`, `bootstrap [--list]` | Show exactly what the assistant sees | ✅ |
 | `move` | Move a note and pick the links to fix, in one command | ✅ |
 | `relink` | Fix links after a move made outside Recognitor | ✅ |
+| `lint [--strict]` | Report case twins, missing entry points, type schema misses, and other problems. `--strict` fails on warnings too, for a pre-commit hook or CI | ✅ |
 | `mcp` | Serve the tools to one assistant session over stdio | ✅ |
 | `config get/set` | Read and change the config file | ✅ |
 | `ghosts` | List links to missing notes, with a hint where a moved note went | ⏳ designed |
 | `trash empty` | Clear `.recognitor/trash` | ⏳ designed |
-| `lint` | Report case twins, missing entry points, and other problems | ⏳ designed |
 
 ## Setup
 
@@ -289,6 +289,7 @@ recognitor read "Auth Flow" --section "Observations"
 recognitor bootstrap --list
 recognitor move ideas/Caching design/b/Caching
 recognitor relink ideas/Caching design/b/Caching ops/Runbook
+recognitor lint --strict
 ```
 
 `sync --report` prints extra detail for checking the index. Everyday use can skip it.
@@ -299,7 +300,8 @@ recognitor relink ideas/Caching design/b/Caching ops/Runbook
 | :--- | :--- |
 | Read tools and the MCP server | ✅ Built and tested |
 | Write tools | ✅ Built and tested |
-| CLI `ghosts`, `trash empty`, `lint` | ⏳ Designed, not built |
+| CLI `lint` | ✅ Built and tested |
+| CLI `ghosts`, `trash empty` | ⏳ Designed, not built |
 | Search ranking | ⚠️ The namespace boost uses placeholder values until the retrieval benchmark sets them |
 | Vector search | ⏳ Planned |
 | Platforms | Developed and tested on Windows. Linux and macOS are untested |

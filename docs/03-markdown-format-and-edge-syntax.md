@@ -96,7 +96,7 @@ Recognitor supports an **open vocabulary** for predicates in SQLite (`predicate 
 | Class | Predicates | Engine Behavior |
 | :--- | :--- | :--- |
 | **Hierarchical** | `part_of`, `has_part`, `indexes` | Handled via recursive SQL CTEs to collapse or expand subtrees, modules, and namespaces. Inverse direction automatically flips (`part_of` <-> `has_part`) in graph queries; bootstrap loading follows only `indexes` and `has_part`, in the written direction ([04-information-stores-and-lifecycle.md §2.2](04-information-stores-and-lifecycle.md#22-loading-load_bootstrap)). Both directions are stored as written, and graph queries treat `A has_part B` plus `B part_of A` as one fact. |
-| **Lifecycle & Invalidation** | `supersedes` | Traversal algorithms recognize superseded notes as historical, automatically deprioritizing or excluding them from prompt retrieval. `load_bootstrap()` never follows them. The `supersedes` edge is the only source of truth for "superseded": lint flags a frontmatter `status: superseded` that no edge confirms, and an edge whose target says otherwise. |
+| **Lifecycle & Invalidation** | `supersedes` | Traversal algorithms recognize superseded notes as historical, automatically deprioritizing or excluding them from prompt retrieval. `load_bootstrap()` never follows them. The `supersedes` edge is the only source of truth for "superseded": lint flags a frontmatter `status: superseded` that no edge confirms, and an edge whose target has a `status` other than `superseded`; a target with no `status` contradicts nothing. The `status` value and the predicate compare ignoring case. Archive notes store no edges, so a `supersedes` line in one confirms nothing. |
 | **Lateral & Associative** | `relates_to`, `depends_on`, `implements`, etc. | Relational edges with weights computed at query time ([02 §6](02-open-questions-and-tradeoffs.md)), used in graph walks (Personalized PageRank, shortest paths). |
 
 ### Tier 2: Generic Inline Mentions
@@ -126,7 +126,7 @@ Follow [the deploy checklist](../ops/Deploy%20Checklist.md) before release.
 - Paths resolve relative to the linking note. A leading `/` means the **vault root**, so a Markdown link can cross namespaces.
 - Percent-encoding is decoded; `#fragments` and query strings do not change the target.
 - Exact files only: no title lookup. A link to a file that does not exist yet stays a ghost until it does.
-- Case does not count (§4), as in Obsidian and on Windows and macOS. `lint` warns when a link's case differs from the file's spelling, because GitHub and Linux tools need the exact case.
+- Case does not count (§4), as in Obsidian and on Windows and macOS. `lint` warns when a Markdown link's case differs from the file's spelling, because GitHub and Linux tools need the exact case. Wikilinks are not checked: those tools do not read them.
 - Ignored: external URLs, `mailto:` and `file:` links, images, fragment-only links (`#section`), and paths that land in the vault root or leave the vault (§4).
 - Markdown links are always `links_to`; typed relations use wikilinks under `## Relations`.
 

@@ -90,6 +90,7 @@ A line ending in "page N" means more results exist.
 - **Why a tool result:** each error message names the fix (call `load_bootstrap`, the list of sections), so it comes back as text the model reads and acts on. The flag tells the client the call failed, so a refusal never passes for a success.
 - **No prefix over MCP:** the text is the CLI's message without the `error:` prefix; the flag already says it.
 - **Argument messages:** they match the CLI's texts, without its dashes. A missing argument reads `<tool> needs <what>`: `search needs a query`, `read_note needs a note`, `load_namespace needs ns`. An argument of the wrong type reads `<argument> needs text`, or `page needs a number from 1`. New tools follow the same two patterns.
+- **One exception, `lint`:** its findings are a normal result on stdout even when they include errors, and an error finding sets exit 1 (§12.2). The findings are what the user asked for; the exit code is the verdict a hook or CI reads.
 - **Unknown arguments are errors:** `unexpected argument: <name>`, as the CLI says. Ignoring one would turn a typo such as `pages: 2` into page 1, a wrong result that looks right. The schemas do not mark extra arguments as forbidden: that would cost tokens in every session, and the error already teaches the agent.
 
 ---
@@ -644,6 +645,51 @@ relinked: 2 links in 1 note
 - **`--relink`:** a CLI-only option. `all` and `none` answer without asking, and print nothing to stderr. `ask` reads the answer from stdin even when it is a pipe: `echo 1,3 | recognitor move ... --relink ask`. The default is `ask` when stdin is a terminal and `none` when it is not; then the move is kept and stderr says `stdin is not a terminal, so no links were rewritten. Run the relink command above, or pass --relink all.`
 - **Exit codes:** as for every command (§2.1, "Errors"). A refusal (§5.3) is an error: stdout stays empty and nothing moves. The same path, several matches and relink warnings exit 0.
 - **Usage messages:** `move needs a note and a new_path, and takes nothing else`, `--relink needs all, none or ask`, `--relink belongs to move`.
+
+### 12.2 `lint [--strict]`
+
+Checks the vault against the rules of [02-open-questions-and-tradeoffs.md §8](02-open-questions-and-tradeoffs.md#8-schema-validation-strategy-structural-linting--vault-wide-type-schemas-resolved) and prints one line per finding, then a summary line. It writes no note file.
+
+```
+$ recognitor lint
+warning: design/Index: entry point is spelled "Index.md"; spell it index.md
+warning: ops/Deploy:23: link "Caching" reaches design/Caching in another namespace without a prefix; write it as [[design::Caching]]
+warning: ops/Runbook:14: summary paragraph is 333 characters; the limit is 300
+lint: 0 errors, 3 warnings, 0 hints; 106 notes checked
+```
+
+- **Line shape:** `<severity>: <subject>[:<line>]: <message>`. The severity is `error`, `warning` or `hint`. The subject is a note id or `.recognitor/schemas.toml`. A finding about the vault as a whole (names, a namespace without `index.md`, the bootstrap hint) has no subject: `warning: namespace "ops" has no index.md; load_namespace lists its notes instead`.
+- **Order:** errors, then warnings, then hints. Within each, by subject ignoring case, then by line; a finding with no line comes before the subject's findings that have one, and findings on one line keep the order the checks found them.
+- **Summary line:** always last, `lint --strict:` when the flag is given. A clean vault prints only this line.
+- **Severity:** errors are check 7 (a non-ASCII name, case twins) and a `schemas.toml` that cannot be used. Everything else is a warning, a file the sweep could not read included: a lint that could not read a file has not passed. `--strict` prints every warning as `error:`. The bootstrap hint stays a hint.
+- **Sweep first:** lint runs a sync, then checks the stored copy of every note with the sweep's own parser and link resolver. A sync with no changes reads no files and the index keeps no warnings, so this is how lint sees every note's warnings. Type schemas read the note's text, not its stored rows, because bootstrap and archive notes store no observations or edges.
+- **Streams:** the report goes to stdout, even with errors, and stderr stays empty (§2.1, "Errors").
+
+| Exit | When |
+| :--- | :--- |
+| 0 | No error finding |
+| 1 | At least one error finding (with `--strict`, any warning), or the command failed (§2.1) |
+| 2 | Bad arguments (§2.1) |
+
+**Messages.** The parser's warnings (checks 1, 2, 3, 5, and an observation with no text) and the ambiguous link (check 4) keep the text `sync --report` prints. The others:
+
+| Check | Message |
+| :--- | :--- |
+| 4, a link to another namespace without `ns::` ([03 §4](03-markdown-format-and-edge-syntax.md#writing-a-link)) | `link "<link>" reaches <id> in another namespace without a prefix; write it as [[<ns>::<link>]]` |
+| 6, no confirming edge | `status is "superseded", but no note links to it with supersedes` |
+| 6, the target disagrees | `supersedes [[<link>]], but <id> has status "<status>", not "superseded"` |
+| 7, names (as `sync` prints them, §6) | `non-ASCII name, not indexed: <paths> (<n> notes left out)`, `case twins, none of them indexed: <paths> (<n> notes left out)` |
+| 8, entry point | `entry point is spelled "<name>"; spell it index.md` |
+| 8, Markdown link | `link "<link>" differs in case from the file <path>; GitHub and Linux tools need the exact case` |
+| 9 | `namespace "<folder>" has no index.md; load_namespace lists its notes instead`; for the bootstrap, `namespace "<folder>" has no index.md, so load_bootstrap returns an error` |
+| Hint | `the vault has no bootstrap/ folder with notes, so load_bootstrap returns an error` |
+| Schema, `required_fields` | `schema "<type>": required field "<field>" is missing`, or `... is empty` |
+| Schema, `allowed` | `schema "<type>": <field> is "<value>"; allowed: <a>, <b>`; `is empty` or `is not a plain value` in place of the quoted value |
+| Schema, `required_categories` | `schema "<type>": no [<category>] observation` |
+| Schema, `required_relations` | `schema "<type>": no <predicate> relation under ## Relations` |
+| `schemas.toml` | `cannot be read: <reason>`; `is not valid TOML, so no schema is checked: line <n>: <reason>`; `unknown key "<key>"; the file holds only [type.<name>] blocks`; `"type" must be a table of [type.<name>] blocks`; `[type.<name>] must be a table`; `[type.<name>] unknown key "<key>"; the keys are required_fields, allowed, required_categories, required_relations`; `[type.<name>] <key> must be a list of strings`, where an entry inside `allowed` is named `allowed.<field>`; `[type.<name>] allowed must be a table of lists, like { status = ["draft"] }` |
+
+- **Usage messages:** `--strict belongs to lint`.
 
 ---
 

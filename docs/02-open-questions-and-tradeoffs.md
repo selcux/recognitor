@@ -113,7 +113,7 @@ Resolved in favor of lightweight **Structural Linting** plus optional **vault-wi
 
   Syntax rules: [03-markdown-format-and-edge-syntax.md](03-markdown-format-and-edge-syntax.md).
 - **Ingestion Tolerance:** Invalid files trigger non-fatal diagnostic warnings during SQLite indexing rather than halting parsing or dropping notes from search. The exceptions are names: a non-ASCII name is not indexed, and neither are case twins, because indexing one would guess which file the user meant and indexing both would break link resolution. Both stay out until renamed ([07-interface-contracts.md §6](07-interface-contracts.md#6-note-identity-and-moves)). A file the sweep listed but can no longer read does not fail the sweep either: if it is gone (deleted, or replaced by an editor's save-and-rename), it counts as deleted; if it is locked or unreadable, it is skipped with a warning, and its indexed copy stays until a later sweep reads it.
-- **Type Schemas (DR1-12):** one file per vault, `<vault>/.recognitor/schemas.toml`, holds one block per note `type`. A block applies to every note with that `type`, in every namespace, bootstrap included:
+- **Type Schemas (DR1-12):** one file per vault, `<vault>/.recognitor/schemas.toml`, holds one block per note `type`. A block applies to every note with that `type`, in every namespace except the archive, bootstrap included:
 
   ```toml
   [type.concept]
@@ -125,17 +125,21 @@ Resolved in favor of lightweight **Structural Linting** plus optional **vault-wi
 
   | Key | Checks in the note | Fails when |
   | :--- | :--- | :--- |
-  | `required_fields` | These frontmatter keys exist | A listed key is missing |
+  | `required_fields` | These frontmatter keys exist and have a value | A listed key is missing or empty |
   | `allowed` | Frontmatter values are on the list | `grade: purple` |
   | `required_categories` | At least one `- [category]` observation per listed category, anywhere in the body | No `[limit]` line |
   | `required_relations` | At least one `- predicate [[X]]` line per listed predicate under `## Relations` | No `part_of` line |
 
   - Notes with no `type`, or with a type no block lists, are not checked.
+  - **Not the archive:** archive notes are frozen history. A schema added later would fail `lint --strict` on every old record, and the only fix would be editing them. The structural checks still run on archive notes.
+  - **Empty:** a null value, a blank string or an empty list. An empty required field gets only its `required_fields` finding, not an `allowed` one too. An empty mapping (`status: {}`) is not empty: `allowed` reports it as not a plain value.
+  - **Matching:** type names and `allowed` values match exactly, trimmed, with case counting, because the list sets the spelling. A list value passes only when every item is allowed. Category and predicate names ignore case, as the parser does.
+  - **The file itself:** a missing `schemas.toml` means no schemas and no finding. A file that cannot be read or is not TOML, an unknown key, or a value of the wrong kind is a lint error, because a gate that silently does not run is worse than one that fails. A bad key is skipped, and the rest of the file still applies.
   - **One type, one definition:** a type that needs different rules gets a different name (e.g. `health-record` instead of `record`). There are no per-namespace overrides; `type` is free metadata, so renaming costs nothing.
   - **Rejected: per-namespace schemas.** In the Basic Memory vault they produced an identical duplicate (`plan` defined in two projects) and unchecked notes (`decision` and `record` used in projects that have no schema for them).
   - **Rejected: schema notes in Markdown.** They turn notes into configuration.
   - **Rejected: Picoschema.** A schema DSL is exactly what this section avoids.
-- **Lint exit code:** `recognitor lint` exits non-zero when it finds an error (check 7: non-ASCII names, case twins). `recognitor lint --strict` also turns structural and schema warnings into errors, for pre-commit hooks and CI workflows.
+- **Lint exit code:** `recognitor lint` exits non-zero when it finds an error (check 7: non-ASCII names, case twins). `recognitor lint --strict` also turns structural and schema warnings into errors, for pre-commit hooks and CI workflows. Output, messages and exit codes: [07-interface-contracts.md §12.2](07-interface-contracts.md#122-lint---strict).
 
 ---
 
