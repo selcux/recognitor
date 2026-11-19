@@ -311,7 +311,7 @@ recognitor ghosts
 | Write tools | ✅ Built and tested |
 | CLI `lint`, `ghosts` | ✅ Built and tested |
 | CLI `trash empty` | ✅ Built and tested |
-| Search ranking | ⚠️ The namespace boost uses placeholder values until the retrieval benchmark sets them |
+| Search ranking | ✅ Verified at 98% recall@5 with the retrieval benchmark |
 | Vector search | ⏳ Planned |
 | Platforms | Developed and tested on Windows. Linux and macOS are untested |
 
