@@ -258,27 +258,26 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
    recognitor sync
    ```
 
-3. **Connect the assistant.** For Claude Code:
-
-   ```bash
-   claude mcp add recognitor -- recognitor mcp
-   ```
-
-4. **Load the bootstrap at session start.** A hook is the reliable way, because it does not depend on the model following an instruction. In Claude Code's `settings.json`:
+3. **Connect the assistant.** Register a stdio MCP server whose command is `recognitor mcp`. The client starts one server per session; there is no daemon or port. Most MCP clients take a config entry of this shape:
 
    ```json
    {
-     "hooks": {
-       "SessionStart": [
-         { "hooks": [{ "type": "command", "command": "recognitor bootstrap" }] }
-       ]
+     "mcpServers": {
+       "recognitor": { "command": "recognitor", "args": ["mcp"] }
      }
    }
    ```
 
-   Without hooks, tell the assistant in its instruction file: "Session start: call `load_bootstrap()`, then `load_namespace('<project>')`."
+   To serve a vault other than the configured one, add `"--vault", "/path/to/vault"` to `args`, or set `RECOGNITOR_VAULT` in the entry's environment.
 
-On Windows, a running server keeps the binary open. Disconnect it first (`/mcp` in Claude Code), then reinstall.
+4. **Load the bootstrap at session start.** Pick one:
+
+   | Way | How | Trade-off |
+   | :--- | :--- | :--- |
+   | Session-start hook | The client runs `recognitor bootstrap` and adds its output to the context | Reliable: it does not depend on the model following an instruction. Needs a client with hooks |
+   | Instruction | The assistant's instruction file (`AGENTS.md` or your client's equivalent) says: "Session start: call `load_bootstrap()`, then `load_namespace('<project>')`." | Works with any client. The model has to follow it |
+
+On Windows, a running server keeps the binary open. Disconnect the server in your client first, then reinstall.
 
 The CLI shows the same text the assistant gets:
 
