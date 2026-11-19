@@ -274,7 +274,7 @@ An MCP tool cannot pause mid-call to ask the user, so a move takes two calls:
 2. The agent shows the list to the user, who picks which linking notes to update.
 3. `relink(old, new, notes)` rewrites the links to the moved note in the chosen notes. One write lock (§5.1) covers the call; each note is read from disk, patched and renamed on its own.
 
-- **CLI:** `recognitor move` asks the user directly and does both steps in one command.
+- **CLI:** `recognitor move` runs both steps in one command and asks the user in between (§12.1). The steps are two lock periods, not one transaction.
 - **Broken means changed by the move, whatever the link looks like:** under the write lock, `move_note` resolves the affected links before and after the move: the links whose key matches one of the note's names, and the note's own links. It reports every link whose target changed or became a ghost:
 
 | Link | Breaks because |
@@ -585,12 +585,13 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 - **Argument messages:** `move_note needs a note`, `move_note needs new_path`, `move_note needs expected_checksum`. An empty string counts as not given, as in §9.
 - **Refusal texts:** §5.3.
 - **Path refusals:** `The path has no top-level folder. Write it from the vault root, as folder/name.` and `The path has a non-ASCII character. Note and folder names are ASCII only.`, plus the portable-path text (§6). Other refusals: §5.3.
+- **On the CLI:** `recognitor move` prints this block with two lines changed (§12.1).
 
 ---
 
 ## 12. CLI
 
-The CLI has no `write`, `edit` or `delete` commands. A human edits notes in an editor or Obsidian and the next sweep picks the changes up; agents write through MCP. The CLI offers only what a human cannot do by hand. Its output is the same Markdown text as the MCP tools.
+The CLI has no `write`, `edit` or `delete` commands. A human edits notes in an editor or Obsidian and the next sweep picks the changes up; agents write through MCP. The CLI offers only what a human cannot do by hand. Its output is the same Markdown text as the MCP tools; `move` alone changes two lines (§12.1).
 
 | Command | Why it exists |
 | :--- | :--- |
@@ -599,11 +600,50 @@ The CLI has no `write`, `edit` or `delete` commands. A human edits notes in an e
 | `ghosts`, `lint [--strict]`, `trash empty` | Maintenance |
 | `sync`, `rebuild`, `config get/set` | Engine control |
 
-- **Same arguments as MCP:** a CLI command takes its MCP tool's arguments by the same names. The first required argument is positional, and every optional one is an option with its name: `search <query> --ns <name> --page <n>`, `context <note> --page <n>`, `read <note> --section <heading> --query <text>`. A tool with several required arguments takes them all as positionals, in order, a list last: `relink <old> <new> <note>...`.
+- **Same arguments as MCP:** a CLI command takes its MCP tool's arguments by the same names. The first required argument is positional, and every optional one is an option with its name: `search <query> --ns <name> --page <n>`, `context <note> --page <n>`, `read <note> --section <heading> --query <text>`. A tool with several required arguments takes them all as positionals, in order, a list last: `relink <old> <new> <note>...`. The one exception is `move`, which takes no `expected_checksum` (§12.1).
 - **Which vault:** the `--vault <path>` flag, else the `RECOGNITOR_VAULT` environment variable, else `vault.path` in the config file. With none of them set, the command fails with an error that names all three. Sessions, hooks and the MCP server start in code repos, not in the vault, so the vault is never guessed from the current folder. The MCP server finds its vault the same way.
 - **Config file:** `config.toml` in the per-user local config folder, `ProjectDirs::config_local_dir()` from the `directories` crate (Windows: `%LOCALAPPDATA%\recognitor\config\config.toml`). Local, not roaming, because a vault path belongs to one machine. The `RECOGNITOR_CONFIG` environment variable points at another config file, for tests and portable setups. `config get/set` reads and writes it and keeps comments and unknown keys; keys follow the `section.name` style ([05-database-schema-specification.md §5](05-database-schema-specification.md#5-database-file-location)).
 
 `load_bootstrap` behaves as specified in [04-information-stores-and-lifecycle.md §2.2](04-information-stores-and-lifecycle.md#22-loading-load_bootstrap), failure output included; it keeps no state, so it needs no change for the stateless server.
+
+### 12.1 `move <note> <new_path> [--relink all|none|ask]`
+
+The one command that asks the user something. It runs both steps of §6.1: `move_note`, then `relink` on the notes the user picks.
+
+```
+$ recognitor move ideas/Caching design/b/Caching
+moved: ideas/Caching -> design/b/Caching
+broken links: 3 links in 2 notes
+- design/b/Caching: links_to ./Setup
+- ops/Runbook, titled "Runbook v2": links_to ideas::Caching
+- ops/Runbook, titled "Runbook v2": relates_to ../ideas/Caching
+recognitor relink "ideas/Caching" "design/b/Caching" "ops/Runbook"
+edit by hand: 1 link in design/b/Caching (relink does not touch the moved note's own links)
+1 note has a link to the moved note:
+  1. ops/Runbook
+Rewrite the links in which? [all / none / numbers, e.g. 1,3] (Enter = none): all
+relinked: 2 links in 1 note
+```
+
+- **No checksum:** the checksum guards a version the caller read (§5.2), and a person at a prompt read nothing. The CLI reads the note itself just before the move and passes that checksum, so a save in an editor between the two still refuses the move. A name that matches several notes lists their ids and moves nothing (§6.3).
+- **Two lock periods:** `move_note` commits and releases the write lock (§5.1) before the prompt; `relink` takes its own lock after the answer. The lock is never held while a person thinks. A move whose prompt is abandoned stays done.
+- **The `relink` line** of §11 becomes the CLI command that does the same: ids in double quotes, and `--vault "<path>"` at the end only when `--vault` was given. It is printed before the prompt, so Ctrl-C still leaves the way to finish on screen.
+- **`edit by hand:`** follows when the moved note's own links broke, because the CLI has no `edit` command (§12). It shows even when no linking note is listed.
+- **Streams:** the move block and the `relink` block (§6.1) go to stdout; the move block is flushed before the prompt. The prompt, its list and its messages go to stderr, so stdout holds only Markdown text.
+- **The prompt** shows only when the `relink` line names at least one note.
+
+| Answer | Notes relinked |
+| :--- | :--- |
+| `all`, `a`, `yes`, `y`, in any case | Every listed note |
+| `none`, `n`, `no`, Enter alone, or the end of input | None. stderr says `No links were rewritten. The relink command above does it later.` |
+| Numbers: `1,3`, `1 3`, `2-4` | Those notes |
+| Anything else | None yet: the reason, then the question again, with no limit. `"maybe" is not an answer. Enter all, none, or numbers from 1 to 3, like 1,3.` or `4 is not in the list, which has 3 notes. Enter all, none, or numbers from 1 to 3.` |
+
+- **Enter means none:** no file is rewritten without an explicit answer.
+- **Numbers that leave notes out:** after the `relink` block, the `recognitor relink` command follows again on stdout, naming only the notes left out, so the last command on screen is the one that finishes the job.
+- **`--relink`:** a CLI-only option. `all` and `none` answer without asking, and print nothing to stderr. `ask` reads the answer from stdin even when it is a pipe: `echo 1,3 | recognitor move ... --relink ask`. The default is `ask` when stdin is a terminal and `none` when it is not; then the move is kept and stderr says `stdin is not a terminal, so no links were rewritten. Run the relink command above, or pass --relink all.`
+- **Exit codes:** as for every command (§2.1, "Errors"). A refusal (§5.3) is an error: stdout stays empty and nothing moves. The same path, several matches and relink warnings exit 0.
+- **Usage messages:** `move needs a note and a new_path, and takes nothing else`, `--relink needs all, none or ask`, `--relink belongs to move`.
 
 ---
 
