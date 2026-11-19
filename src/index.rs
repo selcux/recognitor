@@ -1274,12 +1274,7 @@ fn resolve_edge(
                 warning: Warning {
                     kind: WarningKind::AmbiguousLink,
                     line: Some(edge.position),
-                    message: format!(
-                        "link \"{}\" matches {} notes: {}; stored as a ghost",
-                        edge.target_ref,
-                        ids.len(),
-                        ids.join(", ")
-                    ),
+                    message: crate::resolve::ambiguous_message(edge.target_ref, &ids),
                 },
             });
         }

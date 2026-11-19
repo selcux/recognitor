@@ -75,6 +75,15 @@ pub enum Resolution {
     Ambiguous(Vec<String>),
 }
 
+/// The warning text for a link that matches several notes (doc 03 §4, step 5). `sync` and `lint` both print it.
+pub fn ambiguous_message(target_ref: &str, ids: &[String]) -> String {
+    format!(
+        "link \"{target_ref}\" matches {} notes: {}; stored as a ghost",
+        ids.len(),
+        ids.join(", ")
+    )
+}
+
 impl Resolution {
     pub fn target_key(&self) -> Option<&str> {
         match self {

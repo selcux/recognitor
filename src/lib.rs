@@ -12,6 +12,7 @@ pub mod edit_note;
 pub mod error;
 pub mod hash;
 pub mod index;
+pub mod lint;
 pub mod mcp;
 pub mod move_cli;
 pub mod move_note;

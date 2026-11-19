@@ -1,6 +1,7 @@
 //! `recognitor` CLI: a thin layer over the library. Commands are defined in doc 07 §12.
 //!
-//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `move`, `relink`, `mcp` and `config get/set`. The
+//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `move`, `relink`, `lint`, `mcp` and
+//! `config get/set`. The
 //! vault comes from `--vault`, else `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
 //!
 //! `move` is the one command that talks to the user (doc 07 §6.1): it moves the note, prints the broken links, asks which
@@ -26,6 +27,7 @@ const USAGE: &str = "usage: recognitor <command> [--vault <path>] [--report]
        recognitor bootstrap [--list] [--vault <path>]
        recognitor move <note> <new_path> [--relink all|none|ask] [--vault <path>]
        recognitor relink <old> <new> <note>... [--vault <path>]
+       recognitor lint [--strict] [--vault <path>]
        recognitor mcp [--vault <path>]
        recognitor config get <key>
        recognitor config set <key> <value>
@@ -40,6 +42,7 @@ commands:
   move <note> <new_path>    move or rename a note, then ask which linking notes to relink; new_path is from the vault root
   relink <old> <new> <note>...
                             rewrite the links to a moved note in the notes given; old is its id before the move
+  lint                      check the vault against doc 02 §8; exits 1 on an error, with --strict on a warning too
   mcp                       serve the tools over MCP on stdio (one server per client session)
   config get <key>          print a config value
   config set <key> <value>  set a config value
@@ -54,6 +57,7 @@ options:
   --section <h>    read: only this section, by heading text or a path (`Storage > Notes`)
   --query <text>   read: guides which sections stay when a long note is cut
   --relink <how>   move: all, none or ask. Default: ask when stdin is a terminal, else none (the printed relink command finishes it)
+  --strict         lint: turn every warning into an error (hints stay hints)
   --list           bootstrap: list the notes that load, in order, without their content
   -V, --version    print the version
 
@@ -105,6 +109,9 @@ enum Command {
         new: String,
         notes: Vec<String>,
     },
+    Lint {
+        strict: bool,
+    },
     Mcp,
     Config(ConfigCommand),
 }
@@ -125,6 +132,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let mut section = None;
     let mut query = None;
     let mut relink_mode = None;
+    let mut strict = false;
     let mut args = args;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -132,6 +140,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             "--vault" => vault = Some(PathBuf::from(args.next().ok_or("--vault needs a path")?)),
             "--report" => report = true,
             "--list" => list = true,
+            "--strict" => strict = true,
             "--section" => section = Some(args.next().ok_or("--section needs a heading")?),
             "--query" => query = Some(args.next().ok_or("--query needs text")?),
             "--relink" => {
@@ -168,6 +177,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     if list && name != "bootstrap" {
         return Err("--list belongs to bootstrap".to_string());
     }
+    if strict && name != "lint" {
+        return Err("--strict belongs to lint".to_string());
+    }
     let command = match (name.as_str(), rest.as_slice()) {
         ("sync", []) => Command::Sync,
         ("rebuild", []) => Command::Rebuild,
@@ -201,13 +213,14 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             notes: notes.to_vec(),
         },
         ("relink", _) => return Err("relink needs old, new and at least one note".to_string()),
+        ("lint", []) => Command::Lint { strict },
         ("mcp", []) => Command::Mcp,
         ("config", [sub, key]) if sub == "get" => Command::Config(ConfigCommand::Get(key.clone())),
         ("config", [sub, key, value]) if sub == "set" => {
             Command::Config(ConfigCommand::Set(key.clone(), value.clone()))
         }
         ("config", _) => return Err("usage: config get <key> | config set <key> <value>".to_string()),
-        ("sync" | "rebuild" | "search" | "context" | "read" | "bootstrap" | "mcp", [extra, ..]) => {
+        ("sync" | "rebuild" | "search" | "context" | "read" | "bootstrap" | "lint" | "mcp", [extra, ..]) => {
             return Err(format!("unexpected argument: {extra}"));
         }
         (other, _) => return Err(format!("unknown command: {other}")),
@@ -247,10 +260,7 @@ fn run(args: &Args) -> recognitor::Result<String> {
         Command::Mcp => return run_mcp(args),
         other => other,
     };
-    let config_file = config::config_path()?;
-    let vault = config::resolve_vault(args.vault.clone(), std::env::var_os(VAULT_ENV), &config_file)?;
-    let db = config::resolve_db(std::env::var_os(DB_ENV), &config_file)?;
-    let mut index = Index::open(&vault, db.as_deref())?;
+    let (mut index, config_file) = open_index(args)?;
     match command {
         Command::Sync => Ok(report::render(&index.sync(opts)?, args.report)),
         Command::Rebuild => Ok(report::render(&index.rebuild(opts)?, args.report)),
@@ -283,8 +293,32 @@ fn run(args: &Args) -> recognitor::Result<String> {
         }
         Command::Relink { old, new, notes } => Ok(recognitor::relink::render(&index.relink(old, new, notes)?)),
         Command::Config(cmd) => run_config(cmd),
+        // `main` runs `lint` itself, because its exit code depends on what it finds.
+        Command::Lint { .. } => Ok(String::new()),
         Command::Mcp => run_mcp(args),
     }
+}
+
+/// Finds the vault and the database like every command (doc 07 §12, doc 05 §5) and opens the index.
+fn open_index(args: &Args) -> recognitor::Result<(Index, PathBuf)> {
+    let config_file = config::config_path()?;
+    let vault = config::resolve_vault(args.vault.clone(), std::env::var_os(VAULT_ENV), &config_file)?;
+    let db = config::resolve_db(std::env::var_os(DB_ENV), &config_file)?;
+    let index = Index::open(&vault, db.as_deref())?;
+    Ok((index, config_file))
+}
+
+/// `recognitor lint [--strict]`: the report goes to stdout whatever it finds. The exit code is 1 when it holds an
+/// error, which with `--strict` includes every warning (doc 02 §8).
+fn run_lint(args: &Args, strict: bool) -> recognitor::Result<(String, ExitCode)> {
+    let (mut index, _) = open_index(args)?;
+    let report = recognitor::lint::lint(&mut index, strict)?;
+    let code = if report.failed() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    };
+    Ok((report.render(), code))
 }
 
 /// `recognitor move` (doc 07 §6.1, "CLI"): the checksum of the note as it is now, `move_note`, the broken links, the
@@ -369,10 +403,7 @@ fn run_move(
 /// `recognitor mcp`: finds the vault and the database like every command, then serves until stdin closes (doc 07 §1,
 /// §12). Nothing goes to stdout but protocol messages; the text of an error goes to stderr in `main`.
 fn run_mcp(args: &Args) -> recognitor::Result<String> {
-    let config_file = config::config_path()?;
-    let vault = config::resolve_vault(args.vault.clone(), std::env::var_os(VAULT_ENV), &config_file)?;
-    let db = config::resolve_db(std::env::var_os(DB_ENV), &config_file)?;
-    let index = Index::open(&vault, db.as_deref())?;
+    let (index, config_file) = open_index(args)?;
     recognitor::mcp::serve_stdio(index, config_file)?;
     Ok(String::new())
 }
@@ -389,10 +420,14 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match run(&args) {
-        Ok(text) => {
+    let result = match &args.command {
+        Command::Lint { strict } => run_lint(&args, *strict),
+        _ => run(&args).map(|text| (text, ExitCode::SUCCESS)),
+    };
+    match result {
+        Ok((text, code)) => {
             print!("{text}");
-            ExitCode::SUCCESS
+            code
         }
         Err(e) => {
             eprintln!("error: {e}");

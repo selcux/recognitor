@@ -8,7 +8,17 @@ use std::fmt::Write;
 
 use crate::index::{FullCause, SweepKind, SweepReport};
 use crate::parse::WarningKind;
-use crate::walk::NameErrorKind;
+use crate::walk::{NameError, NameErrorKind};
+
+/// The text of a name the engine left out, without a severity prefix: `sync` and `rebuild` print it as a warning
+/// (doc 07 §6), `lint` as an error.
+pub fn name_error_text(e: &NameError) -> String {
+    let what = match e.kind {
+        NameErrorKind::NonAscii => "non-ASCII name, not indexed",
+        NameErrorKind::CaseTwin => "case twins, none of them indexed",
+    };
+    format!("{what}: {} ({} notes left out)", e.paths.join(", "), e.notes_left_out)
+}
 
 /// Renders a sweep report. `verbose` adds every warning line and the diagnostics block.
 pub fn render(r: &SweepReport, verbose: bool) -> String {
@@ -72,16 +82,7 @@ pub fn render(r: &SweepReport, verbose: bool) -> String {
         }
     }
     for e in &r.name_errors {
-        let what = match e.kind {
-            NameErrorKind::NonAscii => "non-ASCII name, not indexed",
-            NameErrorKind::CaseTwin => "case twins, none of them indexed",
-        };
-        let _ = writeln!(
-            out,
-            "warning: {what}: {} ({} notes left out)",
-            e.paths.join(", "),
-            e.notes_left_out
-        );
+        let _ = writeln!(out, "warning: {}", name_error_text(e));
     }
     if !r.warnings.is_empty() {
         let mut by_kind: BTreeMap<WarningKind, usize> = BTreeMap::new();

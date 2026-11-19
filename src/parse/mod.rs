@@ -138,6 +138,9 @@ pub struct ParsedNote {
     pub title: Option<String>,
     /// Frontmatter `type`.
     pub note_type: Option<String>,
+    /// The frontmatter as a YAML mapping, empty when the note has none, when it is not valid YAML, or when it is not
+    /// a mapping. `lint` reads its type schemas and `status` from it (doc 02 §8).
+    pub frontmatter: serde_yaml::Mapping,
     pub summary: Option<String>,
     pub observations: Vec<Observation>,
     pub links: Vec<Link>,
@@ -321,6 +324,7 @@ struct NoteParser<'a> {
     metadata: String,
     fm_title: Option<String>,
     fm_type: Option<String>,
+    fm_map: serde_yaml::Mapping,
     heading: Option<OpenHeading>,
     h1: Option<String>,
     summary_state: SummaryState,
@@ -346,6 +350,7 @@ impl<'a> NoteParser<'a> {
             metadata: String::new(),
             fm_title: None,
             fm_type: None,
+            fm_map: serde_yaml::Mapping::new(),
             heading: None,
             h1: None,
             summary_state: SummaryState::BeforeH1,
@@ -560,6 +565,9 @@ impl<'a> NoteParser<'a> {
             Ok(value) => {
                 self.fm_title = yaml_scalar(value.get("title"));
                 self.fm_type = yaml_scalar(value.get("type"));
+                if let serde_yaml::Value::Mapping(map) = value {
+                    self.fm_map = map;
+                }
             }
             Err(e) => {
                 let detail = e.to_string();
@@ -692,6 +700,7 @@ impl<'a> NoteParser<'a> {
         ParsedNote {
             title: self.fm_title.or(self.h1),
             note_type: self.fm_type,
+            frontmatter: self.fm_map,
             summary,
             observations: self.observations,
             links,
