@@ -765,11 +765,11 @@ fn main() -> Res<()> {
     let mut total_bytes = 0u64;
     let mut file_count = 0usize;
     for entry in walkdir(args.out_dir.as_path())? {
-        if let Ok(meta) = entry.metadata() {
-            if meta.is_file() {
-                file_count += 1;
-                total_bytes += meta.len();
-            }
+        if let Ok(meta) = entry.metadata()
+            && meta.is_file()
+        {
+            file_count += 1;
+            total_bytes += meta.len();
         }
     }
 

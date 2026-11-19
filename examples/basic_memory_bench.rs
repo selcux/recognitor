@@ -6,7 +6,6 @@
 //! usage: cargo build --release --example basic_memory_bench
 //!        target/release/examples/basic_memory_bench <vault> <scratch-db> [--questions <path>] [--basic-memory <cmd>]
 
-use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -183,12 +182,12 @@ fn parse_bm_hits(text: &str, project: &str) -> Vec<String> {
     let mut hits = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("- ") {
-            if let Some((file, _)) = rest.split_once('|') {
-                let note_id = file.trim().strip_suffix(".md").unwrap_or(file.trim());
-                let full = format!("{project}/{note_id}");
-                hits.push(full);
-            }
+        if let Some(rest) = trimmed.strip_prefix("- ")
+            && let Some((file, _)) = rest.split_once('|')
+        {
+            let note_id = file.trim().strip_suffix(".md").unwrap_or(file.trim());
+            let full = format!("{project}/{note_id}");
+            hits.push(full);
         }
     }
     hits
