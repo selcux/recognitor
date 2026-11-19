@@ -20,7 +20,7 @@ use recognitor::read::DEFAULT_MAX_TOKENS as READ_DEFAULT_MAX_TOKENS;
 use recognitor::read::Read;
 use recognitor::{Error, Index, SweepOptions, report};
 
-const USAGE: &str = "usage: recognitor <command> [--vault <path>] [--report]
+const USAGE: &str = "usage: recognitor sync|rebuild [--report] [--vault <path>]
        recognitor search <query> [--vault <path>] [--ns <namespace>] [--page <n>]
        recognitor context <note> [--vault <path>] [--page <n>]
        recognitor read <note> [--section <heading>] [--query <text>] [--vault <path>]
@@ -53,7 +53,7 @@ config keys: vault.path, db.path, bootstrap.max_tokens, read.max_tokens
 
 options:
   --vault <path>   vault root; else RECOGNITOR_VAULT, else vault.path in the config file
-  --report         list every warning and print shadow-mode diagnostics
+  --report         sync, rebuild: list every warning and print shadow-mode diagnostics
   --ns <name>      search: the namespace as a ranking perspective
   --page <n>       search, context: page number, from 1
   --section <h>    read: only this section, by heading text or a path (`Storage > Notes`)
@@ -132,7 +132,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let mut vault = None;
     let mut report = false;
     let mut ns = None;
-    let mut page = 1;
+    let mut page = None;
     let mut list = false;
     let mut section = None;
     let mut query = None;
@@ -158,11 +158,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             }
             "--ns" => ns = Some(args.next().ok_or("--ns needs a namespace")?),
             "--page" => {
-                page = args
-                    .next()
-                    .and_then(|v| v.parse::<usize>().ok())
-                    .filter(|p| *p >= 1)
-                    .ok_or("--page needs a number from 1")?;
+                page = Some(
+                    args.next()
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .filter(|p| *p >= 1)
+                        .ok_or("--page needs a number from 1")?,
+                );
             }
             _ => positional.push(arg),
         }
@@ -173,6 +174,13 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     if ns.is_some() && name != "search" {
         return Err("--ns belongs to search".to_string());
     }
+    if page.is_some() && !matches!(name.as_str(), "search" | "context") {
+        return Err("--page belongs to search and context".to_string());
+    }
+    if report && !matches!(name.as_str(), "sync" | "rebuild") {
+        return Err("--report belongs to sync and rebuild".to_string());
+    }
+    let page = page.unwrap_or(1);
     if (section.is_some() || query.is_some()) && name != "read" {
         return Err("--section and --query belong to read".to_string());
     }
