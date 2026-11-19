@@ -633,6 +633,7 @@ The CLI has no `write`, `edit` or `delete` commands. A human edits notes in an e
 | `sync`, `rebuild`, `config get/set` | Engine control |
 
 - **Same arguments as MCP:** a CLI command takes its MCP tool's arguments by the same names. The first required argument is positional, and every optional one is an option with its name: `search <query> --ns <name> --page <n>`, `context <note> --page <n>`, `read <note> --section <heading> --query <text>`. A tool with several required arguments takes them all as positionals, in order, a list last: `relink <old> <new> <note>...`. The one exception is `move`, which takes no `expected_checksum` (§12.1).
+- **An option on the wrong command is a bad argument** (§2.1), never ignored: ignoring `--page 2` on `read` would return a wrong result that looks right. The message names the commands that take it: `--ns belongs to search`, `--page belongs to search and context`, `--section and --query belong to read`, `--relink belongs to move`, `--list belongs to bootstrap`, `--strict belongs to lint`, `--report belongs to sync and rebuild`.
 - **Which vault:** the `--vault <path>` flag, else the `RECOGNITOR_VAULT` environment variable, else `vault.path` in the config file. With none of them set, the command fails with an error that names all three. Sessions, hooks and the MCP server start in code repos, not in the vault, so the vault is never guessed from the current folder. The MCP server finds its vault the same way.
 - **Config file:** `config.toml` in the per-user local config folder, `ProjectDirs::config_local_dir()` from the `directories` crate (Windows: `%LOCALAPPDATA%\recognitor\config\config.toml`). Local, not roaming, because a vault path belongs to one machine. The `RECOGNITOR_CONFIG` environment variable points at another config file, for tests and portable setups. `config get/set` reads and writes it and keeps comments and unknown keys; keys follow the `section.name` style ([05-database-schema-specification.md §5](05-database-schema-specification.md#5-database-file-location)).
 
@@ -765,6 +766,8 @@ recognitor relink "ideas/Caching" "design/Caching" "ops/Runbook" "ops/Deploy"
 | `ns::folder/name`, `ns::name` | `ns/folder/name`, `ns/name` |
 | `folder/name`, no prefix | `<linking note's namespace>/folder/name`; one command per distinct `old` |
 | A bare name | No command: it never has a hint (§6.2) |
+
+- **Spelling of `old`:** as the link writes it (§6, "Id = path"), so `[[old/Ghost target]]` in `tmp` gives `tmp/old/Ghost target`. Links that differ only in case use the spelling the summary line shows. A relative or Markdown link has only its key, so its `old` is the key without the leading `/`.
 
 - **Usage messages:** `unexpected argument: <word>` for a second positional.
 
