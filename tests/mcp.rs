@@ -207,7 +207,7 @@ impl Drop for Server {
 fn doc_instructions() -> String {
     let after = DOC_07.split("**Server instructions:**").nth(1).unwrap();
     let block = after.split("```").nth(1).unwrap();
-    block.trim_start_matches('\n').trim_end_matches('\n').to_string()
+    block.replace("\r\n", "\n").trim_matches('\n').to_string()
 }
 
 struct DocTool {
