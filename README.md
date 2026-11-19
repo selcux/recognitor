@@ -215,6 +215,7 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 - **Links inside the moved note** (the first line above) are fixed with `edit_note`, because `relink` only rewrites links that point to the moved note.
 - **`relink` writes each new link in the shortest form** that still reaches the note from the linking note.
 - **A move made in an editor or a file manager** looks like a delete plus a create, so its broken links become ghosts. `recognitor relink` fixes them once you know the old id.
+- **On the command line,** `recognitor move` does both steps in one command. It prints the broken links, asks which notes to fix (Enter means none), and relinks them. Without a terminal it moves and relinks nothing, unless you pass `--relink all`.
 
 ## Tools
 
@@ -235,10 +236,10 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 | :--- | :--- | :--- |
 | `sync`, `rebuild` | Update the index, or build it again from scratch | ✅ |
 | `search`, `context`, `read`, `bootstrap [--list]` | Show exactly what the assistant sees | ✅ |
+| `move` | Move a note and pick the links to fix, in one command | ✅ |
 | `relink` | Fix links after a move made outside Recognitor | ✅ |
 | `mcp` | Serve the tools to one assistant session over stdio | ✅ |
 | `config get/set` | Read and change the config file | ✅ |
-| `move` | Move a note and pick the links to fix, in one command | ⏳ designed |
 | `ghosts` | List links to missing notes, with a hint where a moved note went | ⏳ designed |
 | `trash empty` | Clear `.recognitor/trash` | ⏳ designed |
 | `lint` | Report case twins, missing entry points, and other problems | ⏳ designed |
@@ -286,6 +287,7 @@ recognitor search "auth tokens" --ns backend
 recognitor context "Auth Flow"
 recognitor read "Auth Flow" --section "Observations"
 recognitor bootstrap --list
+recognitor move ideas/Caching design/b/Caching
 recognitor relink ideas/Caching design/b/Caching ops/Runbook
 ```
 
@@ -297,7 +299,7 @@ recognitor relink ideas/Caching design/b/Caching ops/Runbook
 | :--- | :--- |
 | Read tools and the MCP server | ✅ Built and tested |
 | Write tools | ✅ Built and tested |
-| CLI `move`, `ghosts`, `trash empty`, `lint` | ⏳ Designed, not built |
+| CLI `ghosts`, `trash empty`, `lint` | ⏳ Designed, not built |
 | Search ranking | ⚠️ The namespace boost uses placeholder values until the retrieval benchmark sets them |
 | Vector search | ⏳ Planned |
 | Platforms | Developed and tested on Windows. Linux and macOS are untested |

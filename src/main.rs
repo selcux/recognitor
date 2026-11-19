@@ -1,15 +1,22 @@
 //! `recognitor` CLI: a thin layer over the library. Commands are defined in doc 07 §12.
 //!
-//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `relink` and `config get/set`. The vault comes from
-//! `--vault`, else `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
+//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `move`, `relink`, `mcp` and `config get/set`. The
+//! vault comes from `--vault`, else `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
+//!
+//! `move` is the one command that talks to the user (doc 07 §6.1): it moves the note, prints the broken links, asks which
+//! linking notes to relink, and relinks them. The write lock is never held while it waits for the answer: the move
+//! commits first, and `relink` takes its own lock afterwards.
 
-use std::path::PathBuf;
+use std::io::{self, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use recognitor::bootstrap::DEFAULT_MAX_TOKENS;
 use recognitor::config::{self, VAULT_ENV};
+use recognitor::move_note::MoveNote;
 use recognitor::paths::DB_ENV;
 use recognitor::read::DEFAULT_MAX_TOKENS as READ_DEFAULT_MAX_TOKENS;
+use recognitor::read::Read;
 use recognitor::{Error, Index, SweepOptions, report};
 
 const USAGE: &str = "usage: recognitor <command> [--vault <path>] [--report]
@@ -17,6 +24,7 @@ const USAGE: &str = "usage: recognitor <command> [--vault <path>] [--report]
        recognitor context <note> [--vault <path>] [--page <n>]
        recognitor read <note> [--section <heading>] [--query <text>] [--vault <path>]
        recognitor bootstrap [--list] [--vault <path>]
+       recognitor move <note> <new_path> [--relink all|none|ask] [--vault <path>]
        recognitor relink <old> <new> <note>... [--vault <path>]
        recognitor mcp [--vault <path>]
        recognitor config get <key>
@@ -29,6 +37,7 @@ commands:
   context <note>            the links around one note: an id, a path or a link name
   read <note>               one note under a header line with its checksum; --section reads one part, a long note is cut
   bootstrap                 print the bootstrap payload (the notes linked from bootstrap/index.md)
+  move <note> <new_path>    move or rename a note, then ask which linking notes to relink; new_path is from the vault root
   relink <old> <new> <note>...
                             rewrite the links to a moved note in the notes given; old is its id before the move
   mcp                       serve the tools over MCP on stdio (one server per client session)
@@ -44,6 +53,7 @@ options:
   --page <n>       search, context: page number, from 1
   --section <h>    read: only this section, by heading text or a path (`Storage > Notes`)
   --query <text>   read: guides which sections stay when a long note is cut
+  --relink <how>   move: all, none or ask. Default: ask when stdin is a terminal, else none (the printed relink command finishes it)
   --list           bootstrap: list the notes that load, in order, without their content
   -V, --version    print the version
 
@@ -52,6 +62,17 @@ The database lives in the per-user cache directory; RECOGNITOR_DB or db.path in 
 enum ConfigCommand {
     Get(String),
     Set(String, String),
+}
+
+/// How `move` decides which linking notes to relink (doc 07 §6.1 leaves the prompt to the CLI).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RelinkMode {
+    /// `ask` when stdin is a terminal, else `none`.
+    Auto,
+    All,
+    None,
+    /// Ask on stdin, even when it is not a terminal (`echo 1,2 | recognitor move ... --relink ask`).
+    Ask,
 }
 
 enum Command {
@@ -73,6 +94,11 @@ enum Command {
     },
     Bootstrap {
         list: bool,
+    },
+    Move {
+        note: String,
+        new_path: String,
+        relink: RelinkMode,
     },
     Relink {
         old: String,
@@ -98,6 +124,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     let mut list = false;
     let mut section = None;
     let mut query = None;
+    let mut relink_mode = None;
     let mut args = args;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -107,6 +134,14 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             "--list" => list = true,
             "--section" => section = Some(args.next().ok_or("--section needs a heading")?),
             "--query" => query = Some(args.next().ok_or("--query needs text")?),
+            "--relink" => {
+                relink_mode = Some(match args.next().as_deref() {
+                    Some("all") => RelinkMode::All,
+                    Some("none") => RelinkMode::None,
+                    Some("ask") => RelinkMode::Ask,
+                    _ => return Err("--relink needs all, none or ask".to_string()),
+                });
+            }
             "--ns" => ns = Some(args.next().ok_or("--ns needs a namespace")?),
             "--page" => {
                 page = args
@@ -126,6 +161,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     }
     if (section.is_some() || query.is_some()) && name != "read" {
         return Err("--section and --query belong to read".to_string());
+    }
+    if relink_mode.is_some() && name != "move" {
+        return Err("--relink belongs to move".to_string());
     }
     if list && name != "bootstrap" {
         return Err("--list belongs to bootstrap".to_string());
@@ -151,6 +189,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             query,
         },
         ("bootstrap", []) => Command::Bootstrap { list },
+        ("move", [note, new_path]) => Command::Move {
+            note: note.clone(),
+            new_path: new_path.clone(),
+            relink: relink_mode.unwrap_or(RelinkMode::Auto),
+        },
+        ("move", _) => return Err("move needs a note and a new_path, and takes nothing else".to_string()),
         ("relink", [old, new, notes @ ..]) if !notes.is_empty() => Command::Relink {
             old: old.clone(),
             new: new.clone(),
@@ -233,10 +277,93 @@ fn run(args: &Args) -> recognitor::Result<String> {
             let max_tokens = config::bootstrap_max_tokens(&config_file)?.unwrap_or(DEFAULT_MAX_TOKENS);
             Ok(bootstrap.render(max_tokens))
         }
+        Command::Move { note, new_path, relink } => {
+            let max_tokens = config::read_max_tokens(&config_file)?.unwrap_or(READ_DEFAULT_MAX_TOKENS);
+            run_move(&mut index, args.vault.as_deref(), note, new_path, *relink, max_tokens)
+        }
         Command::Relink { old, new, notes } => Ok(recognitor::relink::render(&index.relink(old, new, notes)?)),
         Command::Config(cmd) => run_config(cmd),
         Command::Mcp => run_mcp(args),
     }
+}
+
+/// `recognitor move` (doc 07 §6.1, "CLI"): the checksum of the note as it is now, `move_note`, the broken links, the
+/// prompt, `relink`.
+///
+/// - **The checksum.** `move_note` guards the move with the checksum of the version the caller read (doc 07 §5.2). A
+///   person at a prompt read nothing, so the CLI reads the note itself, a moment before, and passes that checksum: an
+///   editor save in the gap still refuses the move. A name that matches several notes lists them and moves none.
+/// - **Output.** The move block goes to stdout, flushed before anything is asked; the prompt and its notes go to
+///   stderr, so stdout holds only the Markdown text.
+/// - **The lock.** `move_note` commits and releases the write lock before the prompt; `relink` takes its own.
+/// - **No answer.** Ctrl-C, the end of input or Enter leave the links as they are. The block already printed the
+///   `recognitor relink` command that finishes the job.
+fn run_move(
+    index: &mut Index,
+    vault_flag: Option<&Path>,
+    note: &str,
+    new_path: &str,
+    mode: RelinkMode,
+    max_tokens: usize,
+) -> recognitor::Result<String> {
+    let checksum = match index.read(note, None, None, max_tokens)? {
+        Read::Whole(n) | Read::Cut(n) => n.checksum.unwrap_or_default(),
+        other => return Ok(recognitor::read::render(&other)),
+    };
+    let moved = match index.move_note(note, new_path, &checksum, max_tokens)? {
+        MoveNote::Refused(text) => return Err(Error::Refused(text)),
+        MoveNote::Normal(text) => return Ok(format!("{text}\n")),
+        moved @ MoveNote::Moved { .. } => moved,
+    };
+    let finish =
+        |old: &str, new: &str, notes: &[String]| recognitor::move_cli::finish_command(old, new, notes, vault_flag);
+    print!("{}", recognitor::move_note::render_cli(&moved, finish));
+    let _ = io::stdout().flush();
+    let MoveNote::Moved { old_id, id, relink, .. } = &moved else {
+        return Ok(String::new());
+    };
+    if relink.is_empty() {
+        return Ok(String::new());
+    }
+    let ask = match mode {
+        RelinkMode::Ask => true,
+        RelinkMode::Auto => {
+            let terminal = io::stdin().is_terminal();
+            if !terminal {
+                eprintln!(
+                    "stdin is not a terminal, so no links were rewritten. Run the relink command above, or pass --relink all."
+                );
+            }
+            terminal
+        }
+        RelinkMode::All | RelinkMode::None => false,
+    };
+    let chosen: Vec<String> = if ask {
+        let stdin = io::stdin();
+        recognitor::move_cli::ask(relink, &mut stdin.lock(), &mut io::stderr().lock()).map_err(|e| Error::Io {
+            path: PathBuf::from("<stdin>"),
+            source: e,
+        })?
+    } else if mode == RelinkMode::All {
+        relink.clone()
+    } else {
+        Vec::new()
+    };
+    if chosen.is_empty() {
+        if ask {
+            eprintln!("No links were rewritten. The relink command above does it later.");
+        }
+        return Ok(String::new());
+    }
+    let mut text = recognitor::relink::render(&index.relink(old_id, id, &chosen)?);
+    // Doc 07 §12.1, "Numbers that leave notes out": the command again, for the notes left out, so the last command on
+    // screen is the one that finishes the job.
+    let left_out: Vec<String> = relink.iter().filter(|n| !chosen.contains(n)).cloned().collect();
+    if !left_out.is_empty() {
+        text.push_str(&recognitor::move_cli::finish_command(old_id, id, &left_out, vault_flag));
+        text.push('\n');
+    }
+    Ok(text)
 }
 
 /// `recognitor mcp`: finds the vault and the database like every command, then serves until stdin closes (doc 07 §1,

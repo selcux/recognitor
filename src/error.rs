@@ -51,6 +51,9 @@ pub enum Error {
     /// `load_namespace` of a namespace with no note in the index (doc 07 §3, "No such namespace"). Holds the name as
     /// given and the namespaces that exist, as their folders are spelled, sorted by name ignoring case.
     NoNamespace { name: String, namespaces: Vec<String> },
+    /// A write was refused and nothing changed (doc 07 §5.3). Holds the text of the refusal, which names the reason and
+    /// returns the current data; the CLI prints it as the error, as an MCP tool returns it as one.
+    Refused(String),
     /// The MCP server could not start or lost its transport. Holds the SDK's message.
     Mcp(String),
     /// The database belongs to another vault (doc 05 §5: one database per vault). Nothing was changed.
@@ -134,6 +137,7 @@ impl fmt::Display for Error {
                 }
                 Ok(())
             }
+            Error::Refused(text) => write!(f, "{text}"),
             Error::Mcp(msg) => write!(f, "mcp: {msg}"),
             Error::NoCacheDir => write!(f, "no per-user cache directory found; set RECOGNITOR_DB"),
             Error::ForeignDatabase(db) => write!(
@@ -161,6 +165,7 @@ impl std::error::Error for Error {
             | Error::OldNotAnId(_)
             | Error::NoSection { .. }
             | Error::NoBootstrap
+            | Error::Refused(_)
             | Error::Mcp(_)
             | Error::BootstrapNotANamespace
             | Error::NoNamespace { .. }

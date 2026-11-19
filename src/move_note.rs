@@ -13,7 +13,7 @@ use std::path::Path;
 
 use rusqlite::Transaction;
 
-use crate::delete_note::{BrokenLink, broken_section};
+use crate::delete_note::{BrokenLink, broken_section, counted};
 use crate::error::{Error, Result};
 use crate::hash::sha256_prefix;
 use crate::index::reindex_moved;
@@ -73,6 +73,56 @@ pub enum BootstrapChange {
 /// among them. The `relink` line is one call that fixes every link into the note; the agent drops the notes the user does
 /// not pick. It is left out when no link into the note broke. The bootstrap notice comes last (doc 07 §1.1).
 pub fn render(m: &MoveNote) -> String {
+    render_with(
+        m,
+        |old_id, id, notes| {
+            let notes: Vec<String> = notes.iter().map(|n| format!("\"{n}\"")).collect();
+            format!(
+                "relink(old: \"{old_id}\", new: \"{id}\", notes: [{}])\n",
+                notes.join(", ")
+            )
+        },
+        None,
+    )
+}
+
+/// The text of a `move_note` result as the CLI prints it (doc 07 §12: "the same Markdown text as the MCP tools"). It
+/// differs from [`render`] in two lines, because a person at a prompt cannot call an MCP tool:
+///
+/// - the `relink(...)` call is the `recognitor relink` command line that does the same (`finish`, built by the
+///   caller, which knows how the vault was named), and
+/// - when the moved note's own links broke, one line says the user fixes them by hand, since the CLI has no `edit`
+///   (doc 07 §12).
+pub fn render_cli(m: &MoveNote, finish: impl Fn(&str, &str, &[String]) -> String) -> String {
+    let by_hand = match m {
+        MoveNote::Moved { id, broken, .. } => {
+            let own = broken.iter().filter(|b| source_id(&b.source) == id).count();
+            (own > 0).then(|| {
+                format!(
+                    "edit by hand: {} in {id} (relink does not touch the moved note's own links)\n",
+                    counted(own, "link")
+                )
+            })
+        }
+        _ => None,
+    };
+    render_with(
+        m,
+        |old_id, id, notes| format!("{}\n", finish(old_id, id, notes)),
+        by_hand.as_deref(),
+    )
+}
+
+/// The id of a listed link's source: `id`, or `id, titled "..."` (doc 07 §4.2).
+fn source_id(source: &str) -> &str {
+    source.split(", titled ").next().unwrap_or(source)
+}
+
+fn render_with(
+    m: &MoveNote,
+    relink_line: impl Fn(&str, &str, &[String]) -> String,
+    after_links: Option<&str>,
+) -> String {
     match m {
         MoveNote::Normal(text) | MoveNote::Refused(text) => text.clone(),
         MoveNote::Moved {
@@ -85,11 +135,10 @@ pub fn render(m: &MoveNote) -> String {
             let mut s = format!("moved: {old_id} -> {id}\n");
             s.push_str(&broken_section(broken));
             if !relink.is_empty() {
-                let notes: Vec<String> = relink.iter().map(|n| format!("\"{n}\"")).collect();
-                s.push_str(&format!(
-                    "relink(old: \"{old_id}\", new: \"{id}\", notes: [{}])\n",
-                    notes.join(", ")
-                ));
+                s.push_str(&relink_line(old_id, id, relink));
+            }
+            if let Some(line) = after_links {
+                s.push_str(line);
             }
             match bootstrap {
                 BootstrapChange::None => {}
@@ -301,5 +350,57 @@ mod tests {
              broken links: none\n\
              notice: ideas/Caching no longer loads as instructions at session start\n"
         );
+    }
+
+    fn finish(old: &str, new: &str, notes: &[String]) -> String {
+        format!("recognitor relink {old} {new} {}", notes.join(" "))
+    }
+
+    #[test]
+    fn the_cli_text_swaps_the_relink_call_for_the_command() {
+        let broken = vec![BrokenLink {
+            source: "ops/Runbook".to_string(),
+            predicate: "links_to".to_string(),
+            target: "ideas::Caching".to_string(),
+            now: crate::delete_note::Now::Nowhere,
+        }];
+        assert_eq!(
+            render_cli(&moved(broken, &["ops/Runbook"], BootstrapChange::Loads), finish),
+            "moved: ideas/Caching -> design/b/Caching\n\
+             broken links: 1 link in 1 note\n\
+             - ops/Runbook: links_to ideas::Caching\n\
+             recognitor relink ideas/Caching design/b/Caching ops/Runbook\n\
+             notice: design/b/Caching loads as instructions at session start\n"
+        );
+    }
+
+    #[test]
+    fn the_moved_notes_own_links_get_an_edit_by_hand_line_even_with_no_linking_note() {
+        let own = |source: &str| BrokenLink {
+            source: source.to_string(),
+            predicate: "links_to".to_string(),
+            target: "./Setup".to_string(),
+            now: crate::delete_note::Now::Nowhere,
+        };
+        let m = moved(
+            vec![own("design/b/Caching"), own("design/b/Caching, titled \"Caching v2\"")],
+            &[],
+            BootstrapChange::NoLonger,
+        );
+        assert_eq!(
+            render_cli(&m, finish),
+            "moved: ideas/Caching -> design/b/Caching\n\
+             broken links: 2 links in 2 notes\n\
+             - design/b/Caching: links_to ./Setup\n\
+             - design/b/Caching, titled \"Caching v2\": links_to ./Setup\n\
+             edit by hand: 2 links in design/b/Caching (relink does not touch the moved note's own links)\n\
+             notice: ideas/Caching no longer loads as instructions at session start\n"
+        );
+    }
+
+    #[test]
+    fn the_cli_text_of_a_normal_result_is_the_mcp_text() {
+        let m = MoveNote::Normal("The note is already at a/B, so nothing was moved.".to_string());
+        assert_eq!(render_cli(&m, finish), render(&m));
     }
 }
