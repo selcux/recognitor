@@ -325,3 +325,11 @@ recognitor ghosts
 - [Database Schema](docs/05-database-schema-specification.md): tables, indexes, query patterns, and where the index file lives.
 - [Design Reviews](docs/06-design-reviews.md): review log and finding tracker.
 - [Interface Contracts](docs/07-interface-contracts.md): every tool and CLI command as specified, including ones not built yet.
+
+## License
+
+Recognitor is licensed under the [Common Public Attribution License Version 1.0 (CPAL-1.0)](LICENSE).
+
+- **Modifications:** Changes to Recognitor's source files must be released under CPAL-1.0, including when deployed as a network service or SaaS (External Deployment).
+- **Larger Works:** You may combine Recognitor with closed-source code as a Larger Work.
+- **Attribution (Exhibit B):** Distributions and SaaS / External Deployments must prominently display `Powered by Recognitor`, `Copyright (c) 2026 Selçuk Öztürk`, and `https://gitlab.com/selcux/recognitor`.

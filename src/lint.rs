@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! `recognitor lint [--strict]` (doc 02 §8, doc 03 §2-4, doc 07 §3, §6, §12).
 //!
 //! Lint is a read-only report on the vault. It writes no note file. The docs give the checks, the type schemas and the

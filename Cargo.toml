@@ -2,6 +2,7 @@
 name = "recognitor"
 version = "0.1.0"
 edition = "2024"
+license = "CPAL-1.0"
 description = "Local-first Markdown memory engine for LLMs, with SQLite as a disposable projection"
 publish = false
 authors = ["Selçuk Öztürk"]

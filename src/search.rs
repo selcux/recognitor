@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! Full-text search (doc 07 §4, doc 05 §3.7).
 //!
 //! The candidates come from `notes_fts` ordered by BM25 (doc 05 §3.7). The `ns` boost reorders them, paging cuts the

@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! Stat-only directory walk (doc 02 §4). Reads directory listings, never file contents.
 //!
 //! On Windows the metadata comes from the directory listing itself, so the walk costs one call per folder.

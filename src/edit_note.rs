@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! `edit_note(note, op, ...)` (doc 07 §9): changes part of a note without rewriting it. Each op patches the bytes of
 //! the file in place; Markdown is never regenerated from the parse tree.
 //!

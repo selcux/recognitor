@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! SHA-256 helpers. Checksums (doc 05 §2.1), observation ids (§2.3) and the vault id (§5) all use SHA-256 in
 //! lowercase hex.
 

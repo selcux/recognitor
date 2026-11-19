@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! SQLite schema and connection setup (doc 05 §2, §4). Vectors (doc 05 §2.5) are not part of shadow mode.
 
 use std::path::Path;

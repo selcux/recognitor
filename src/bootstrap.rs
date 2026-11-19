@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! `load_bootstrap()`: the bootstrap link tree as one Markdown payload (doc 04 §2.2, doc 05 §3.1).
 //!
 //! The walk runs here, in Rust, with one visited set. Each step asks the index for one note's outgoing

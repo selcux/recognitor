@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! Note parser (doc 03 §2-3). One pass over the `pulldown-cmark` event stream extracts frontmatter, title, summary,
 //! observations, typed relations and inline links. Rules run on the parse tree, not on raw lines, so links, code and
 //! task boxes are recognized for what they are (doc 03 §1).

@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! `context(note, page?)` (doc 07 §8): what surrounds one note, one level deep, without reading its neighbors.
 //!
 //! Links out come from the query of doc 05 §3.3, links in from §3.4. Bootstrap notes are never listed and archive

@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! The protocol side of `recognitor mcp`: one server per client session over stdio, no HTTP, no daemon (doc 07 §1,
 //! "Transport"). stdout carries protocol messages only; nothing in this crate prints to it while the server runs.
 //!

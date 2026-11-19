@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! `relink(old, new, notes)`: rewrites the links to a moved note in the notes the user chose (doc 07 §6.1).
 //!
 //! The first write tool. It follows the write path of doc 07 §5.1: the write lock for the whole call, then for each

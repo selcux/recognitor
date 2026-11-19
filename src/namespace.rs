@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! `load_namespace` (doc 07 §3, doc 05 §3.2): a namespace's entry note, or its note list when it has none.
 //!
 //! Doc 07 §3 is the spec.

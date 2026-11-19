@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! `recognitor ghosts [<link>]` (doc 07 §2, §6.2, doc 05 §3.5): the backlog of links that reach no note, with a hint
 //! where a note that moved outside Recognitor probably went. CLI only, read only.
 //!

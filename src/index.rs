@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! The indexer: `sync` (on-demand stat sweep) and `rebuild` (drop and re-index), doc 02 §4 and doc 05 §4.
 //!
 //! The whole sweep runs inside one `BEGIN IMMEDIATE` transaction, so concurrent processes queue instead of indexing

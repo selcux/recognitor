@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! Recognitor: a local-first memory engine for LLMs.
 //!
 //! Plain Markdown files in the vault are the source of truth. The SQLite database is a disposable projection of

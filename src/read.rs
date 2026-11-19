@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! `read_note(note, section?, query?)` (doc 07 §7): one note, the whole file exactly as on disk, under a header line
 //! with its short checksum (§7.1); a long note cut to the limit (§7.2); or one section (§7.3).
 

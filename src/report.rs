@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: CPAL-1.0
+// Copyright (c) 2026 Selçuk Öztürk.
+// This file is subject to the Common Public Attribution License Version 1.0 (CPAL-1.0).
+// See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
+
 //! Text output of `sync` and `rebuild`.
 //!
 //! The docs do not define this output (doc 02 §4 says only that `sync` "reports dirty files"), so the format here is
