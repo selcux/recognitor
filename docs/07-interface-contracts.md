@@ -77,6 +77,7 @@ A line ending in "page N" means more results exist.
 
 - **Word for word:** the server sends this text exactly as written here. The retrieval benchmark ([02-open-questions-and-tradeoffs.md §11](02-open-questions-and-tradeoffs.md#11-target-scale--benchmark-resolved)) can change it, through this section.
 - **Write tools** get their lines here when they are built, under the same rules.
+- **Read tools** (`load_bootstrap`, `load_namespace`, `search`, `context`, `read_note`) send `annotations.readOnlyHint: true`. The write tools send no annotations. A read may still refresh the index; it does not change a note.
 
 **Errors:** this document calls each outcome either an error or a normal result. On the wire:
 

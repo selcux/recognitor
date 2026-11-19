@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+    PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
 };
 use rmcp::service::RequestContext;
 use rmcp::transport::stdio;
@@ -27,10 +27,26 @@ struct Recognitor {
     config_file: Arc<PathBuf>,
 }
 
+/// The five tools that do not change a note (doc 07 §1.1 / §2.1). Clients use `readOnlyHint` to group them.
+const READ_TOOLS: &[&str] = &[
+    "load_bootstrap",
+    "load_namespace",
+    "search",
+    "context",
+    "read_note",
+];
+
 fn list() -> Vec<Tool> {
     tools::TOOLS
         .iter()
-        .map(|t| Tool::new(t.name, t.description, t.input_schema()))
+        .map(|t| {
+            let tool = Tool::new(t.name, t.description, t.input_schema());
+            if READ_TOOLS.contains(&t.name) {
+                tool.with_annotations(ToolAnnotations::new().read_only(true))
+            } else {
+                tool
+            }
+        })
         .collect()
 }
 

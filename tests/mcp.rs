@@ -318,12 +318,8 @@ fn tools_list_has_the_read_tools_and_the_write_tools() {
     let v = vault();
     let mut server = v.server();
     let list = server.list_tools();
-    let names: Vec<&str> = list["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|t| t["name"].as_str().unwrap())
-        .collect();
+    let tools = list["tools"].as_array().unwrap();
+    let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
         names,
         [
@@ -339,6 +335,22 @@ fn tools_list_has_the_read_tools_and_the_write_tools() {
             "delete_note"
         ]
     );
+    // Doc 07 §2.1: the five reads send readOnlyHint; the writes send no annotations.
+    for tool in tools.iter().take(5) {
+        assert_eq!(
+            tool["annotations"]["readOnlyHint"],
+            true,
+            "{} should be read-only",
+            tool["name"]
+        );
+    }
+    for tool in tools.iter().skip(5) {
+        assert!(
+            tool.get("annotations").is_none() || tool["annotations"].is_null(),
+            "{} should have no annotations",
+            tool["name"]
+        );
+    }
 }
 
 // `relink` (doc 07 §6.1): the tool and its CLI twin return the same text.
