@@ -77,10 +77,12 @@ fn os(s: &str) -> Option<OsString> {
 #[test]
 fn the_default_config_path_is_config_toml_in_the_local_config_folder() {
     let path = config::config_path_from(None).unwrap();
-    assert!(
-        path.ends_with(Path::new("recognitor").join("config").join("config.toml")),
-        "{path:?}"
-    );
+    let expected_suffix = if cfg!(windows) {
+        Path::new("recognitor").join("config").join("config.toml")
+    } else {
+        Path::new("recognitor").join("config.toml")
+    };
+    assert!(path.ends_with(expected_suffix), "{path:?}");
     // The override replaces it whole.
     assert_eq!(
         config::config_path_from(os("/x/y.toml")).unwrap(),
