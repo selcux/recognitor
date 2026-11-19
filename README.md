@@ -250,7 +250,7 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 | `mcp` | Serve the tools to one assistant session over stdio | ✅ |
 | `config get/set` | Read and change the config file | ✅ |
 | `ghosts [<link>]` | List links to missing notes, with a hint where a moved note went. With a link: the notes that hold it, and the `relink` command when there is a hint | ✅ |
-| `trash empty` | Clear `.recognitor/trash` | ⏳ designed |
+| `trash empty` | Clear `.recognitor/trash` | ✅ |
 
 ## Setup
 
@@ -310,7 +310,7 @@ recognitor ghosts
 | Read tools and the MCP server | ✅ Built and tested |
 | Write tools | ✅ Built and tested |
 | CLI `lint`, `ghosts` | ✅ Built and tested |
-| CLI `trash empty` | ⏳ Designed, not built |
+| CLI `trash empty` | ✅ Built and tested |
 | Search ranking | ⚠️ The namespace boost uses placeholder values until the retrieval benchmark sets them |
 | Vector search | ⏳ Planned |
 | Platforms | Developed and tested on Windows. Linux and macOS are untested |

@@ -26,6 +26,7 @@ pub mod relink;
 pub mod report;
 pub mod resolve;
 pub mod search;
+pub mod trash;
 pub mod walk;
 mod write;
 pub mod write_note;

@@ -550,7 +550,7 @@ Every edit case maps to one op:
 - **Never indexed:** `.recognitor/` is a hidden folder ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)).
 - **Timestamp:** UTC to the second, with dashes for colons: `2026-11-18T19-18-52Z`. Windows refuses `:` in a name, and the folders sort by time. A second delete of the same path in the same second gets `-2`, then `-3`.
 - **Folders stay:** a folder the delete leaves empty stays in place. Removing it would race with a human working in it, and git ignores empty folders anyway.
-- **Undo:** move the file back. `recognitor trash empty` clears the folder.
+- **Undo:** move the file back. `recognitor trash empty` removes `.recognitor/trash` (§12.4). `delete_note` creates the directory again on the next delete.
 - **Output:** the note's id, its trash path, and the links the delete broke. They become ghosts, and the user decides whether to clean them up.
 
 ```
@@ -770,6 +770,18 @@ recognitor relink "ideas/Caching" "design/Caching" "ops/Runbook" "ops/Deploy"
 - **Spelling of `old`:** as the link writes it (§6, "Id = path"), so `[[old/Ghost target]]` in `tmp` gives `tmp/old/Ghost target`. Links that differ only in case use the spelling the summary line shows. A relative or Markdown link has only its key, so its `old` is the key without the leading `/`.
 
 - **Usage messages:** `unexpected argument: <word>` for a second positional.
+
+### 12.4 `trash empty`
+
+Removes `.recognitor/trash` (§10). The directory goes with its contents, notes and other files alike. The rest of the vault stays, including other files under `.recognitor/`. The folder is hidden and never indexed, so the command does not open the database and does not ask anything.
+
+Success prints nothing. Stdout and stderr stay empty, and the exit code is 0. A missing trash directory is already clear, and so is an empty one; an empty directory is removed too.
+
+A delete the operating system refuses stops the command. Files already removed stay removed. The file that could not be removed is left as it was: same bytes, same name. Stdout stays empty and the error goes to stderr (§2.1).
+
+A symlink or junction in place of the trash directory is not followed. Nothing is deleted, and the error is `<path>: refusing to follow a link out of .recognitor/trash`. A trash path that exists and is not a directory gets `<path>: not a directory`. A link inside the trash is removed; its target outside the trash stays.
+
+- **Usage messages:** `usage: trash empty` when `trash` has no subcommand or one other than `empty`. A word after `empty` is `unexpected argument: <word>`.
 
 ---
 
