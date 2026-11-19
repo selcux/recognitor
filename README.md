@@ -312,6 +312,7 @@ recognitor ghosts
 | CLI `lint`, `ghosts` | ✅ Built and tested |
 | CLI `trash empty` | ✅ Built and tested |
 | Search ranking | ✅ Verified at 98% recall@5 with the retrieval benchmark |
+| 100× scale & latency | ✅ Verified: 10k notes, 100k observations, 20k edges (p95: 8.1s rebuild, 32ms sweep, 6ms search) |
 | Vector search | ⏳ Planned |
 | Platforms | Developed and tested on Windows. Linux and macOS are untested |
 
