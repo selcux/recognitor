@@ -8,4 +8,7 @@ AGENTS.md
 .claude/
 .cursor/
 .ai-mediator.json
+
+.repomixignore
+repomix.config.json
 repomix-output.txt
