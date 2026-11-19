@@ -156,12 +156,12 @@ struct Known {
 }
 
 /// One `edges` row before resolution.
-struct EdgeRow {
-    predicate: String,
-    target_ref: String,
-    ref_key: String,
+pub(crate) struct EdgeRow {
+    pub(crate) predicate: String,
+    pub(crate) target_ref: String,
+    pub(crate) ref_key: String,
     is_inline: bool,
-    position: u32,
+    pub(crate) position: u32,
     context: Option<String>,
 }
 
@@ -1203,7 +1203,7 @@ pub(crate) fn reindex_moved(
 /// Edge rows in insertion order: explicit relations first, then inline links, one row per `(predicate, ref_key)` with
 /// the first spelling kept (doc 05 §2.2). Markdown links that leave the vault are dropped (doc 03 §3). Also returns
 /// how many links could become rows, so the report can count the merged ones.
-fn edge_rows(source_key: &str, note: &ParsedNote) -> (Vec<EdgeRow>, usize) {
+pub(crate) fn edge_rows(source_key: &str, note: &ParsedNote) -> (Vec<EdgeRow>, usize) {
     let mut rows = Vec::new();
     let mut seen: HashSet<(String, String)> = HashSet::new();
     let mut eligible = 0;

@@ -12,7 +12,7 @@
 //! `schemas.toml` that cannot be used. Everything else is a warning; `--strict` turns every warning into an error.
 //! The bootstrap hint is never an error, even with `--strict`.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write;
 use std::fs;
 use std::path::Path;
@@ -21,11 +21,11 @@ use rusqlite::{Connection, OptionalExtension};
 use toml_edit::{DocumentMut, Item};
 
 use crate::error::Result;
-use crate::index::{Index, SweepOptions};
+use crate::index::{Index, SweepOptions, edge_rows};
 use crate::parse::{LinkSyntax, ParsedNote, WarningKind, parse_note, silence};
 use crate::paths::{
-    ARCHIVE_NAMESPACE, BOOTSTRAP_NAMESPACE, join_normalized, namespace_of_key, note_id, parent_dir, percent_decode,
-    strip_md_ignore_case,
+    ARCHIVE_NAMESPACE, BOOTSTRAP_NAMESPACE, file_stem, join_normalized, namespace_of_key, note_id, note_key,
+    parent_dir, percent_decode, strip_md_ignore_case,
 };
 use crate::resolve::{Resolution, Step, ambiguous_message, resolve};
 
@@ -351,14 +351,6 @@ fn load_schemas(vault: &Path, findings: &mut Vec<Finding>) -> Schemas {
     }
 }
 
-/// A `supersedes` edge whose target resolved (check 6).
-struct Supersedes {
-    source: String,
-    line: u32,
-    target_ref: String,
-    target_key: String,
-}
-
 /// Runs every check of doc 02 §8 and returns the report. Forces a sweep first, so the index is current.
 pub fn lint(index: &mut Index, strict: bool) -> Result<LintReport> {
     let sweep = index.sync(SweepOptions::default())?;
@@ -384,12 +376,8 @@ pub fn lint(index: &mut Index, strict: bool) -> Result<LintReport> {
     let schemas = load_schemas(index.vault_root(), &mut findings);
     let conn = index.connection();
 
-    let mut statuses: HashMap<String, String> = HashMap::new();
-    let mut supersedes: Vec<Supersedes> = Vec::new();
-    let mut confirmed: HashSet<String> = HashSet::new();
     let mut notes = 0;
     let mut namespaces: BTreeMap<String, String> = BTreeMap::new();
-
     let mut stmt = conn.prepare("SELECT key, path, content FROM notes ORDER BY key")?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
@@ -397,64 +385,10 @@ pub fn lint(index: &mut Index, strict: bool) -> Result<LintReport> {
         let path: String = row.get(1)?;
         let content: String = row.get(2)?;
         notes += 1;
-        let id = note_id(&path).to_string();
-        let ns = namespace_of_key(&key).unwrap_or_default().to_string();
         namespaces
-            .entry(ns.clone())
+            .entry(namespace_of_key(&key).unwrap_or_default().to_string())
             .or_insert_with(|| path.split('/').next().unwrap_or_default().to_string());
-
-        let mut note = parse_note(&content);
-        // Archive notes are frozen history: the structural checks run on them, the type schemas do not.
-        if ns != ARCHIVE_NAMESPACE {
-            for problem in schema_problems(&schemas, &note) {
-                findings.push(Finding::warning(&id, None, problem));
-            }
-        }
-        if let Some(status) = note.frontmatter.get("status").and_then(plain) {
-            statuses.insert(key.clone(), status);
-        }
-        silence(&mut note, &ns);
-
-        // Checks 1, 2, 3, 5 and the empty observation: the parser's own warnings, unchanged.
-        for w in &note.warnings {
-            findings.push(Finding::warning(&id, w.line, w.message.clone()));
-        }
-        link_findings(conn, &key, &id, &ns, &mut findings, &mut supersedes, &mut confirmed)?;
-        markdown_case_findings(conn, &path, &id, &note, &mut findings)?;
-    }
-
-    // Check 6: `status: superseded` against the `supersedes` edges (doc 03 §3).
-    let mut stated: Vec<&String> = statuses
-        .iter()
-        .filter(|(_, s)| s.eq_ignore_ascii_case("superseded"))
-        .map(|(k, _)| k)
-        .collect();
-    stated.sort();
-    for key in stated {
-        if !confirmed.contains(key) {
-            let id = path_of(conn, key)?.map(|p| note_id(&p).to_string()).unwrap_or_default();
-            findings.push(Finding::warning(
-                &id,
-                None,
-                "status is \"superseded\", but no note links to it with supersedes".to_string(),
-            ));
-        }
-    }
-    for edge in &supersedes {
-        let Some(status) = statuses.get(&edge.target_key) else {
-            continue;
-        };
-        if !status.eq_ignore_ascii_case("superseded") {
-            let target = path_of(conn, &edge.target_key)?.map_or(edge.target_key.clone(), |p| note_id(&p).to_string());
-            findings.push(Finding::warning(
-                &edge.source,
-                Some(edge.line),
-                format!(
-                    "supersedes [[{}]], but {target} has status \"{status}\", not \"superseded\"",
-                    edge.target_ref
-                ),
-            ));
-        }
+        findings.extend(note_findings(conn, &schemas, &path, &content)?);
     }
 
     namespace_findings(conn, &namespaces, &mut findings)?;
@@ -475,6 +409,65 @@ pub fn lint(index: &mut Index, strict: bool) -> Result<LintReport> {
     })
 }
 
+/// The type schemas as a write result needs them (doc 07 §5.4, "Not checked"): a `schemas.toml` that cannot be read or
+/// is not TOML gives no schemas and no finding, because the finding is about the file and `lint` reports it. A bad key
+/// inside a readable file is skipped, and the rest applies, as in `lint`.
+pub(crate) fn load_schemas_quiet(vault: &Path) -> Schemas {
+    let Ok(text) = fs::read_to_string(vault.join(SCHEMAS_PATH)) else {
+        return Schemas::default();
+    };
+    parse_schemas(&text).map(|(schemas, _)| schemas).unwrap_or_default()
+}
+
+/// Every check that is about one note (doc 07 §5.4, "Checks"): 1 to 6, the entry point's spelling and a Markdown link's
+/// case (8), a link to another namespace without `ns::`, and the type schemas.
+///
+/// `rel` is the note's path from the vault root and `text` its content, which need not be what the index holds: a write
+/// tool asks about the disk text before a write and the new text after it. Links are resolved, and check 6 reads the
+/// other notes, in the index as `conn` sees it. The findings carry the note's id as subject and are all warnings.
+pub(crate) fn note_findings(conn: &Connection, schemas: &Schemas, rel: &str, text: &str) -> Result<Vec<Finding>> {
+    let id = note_id(rel);
+    let key = note_key(rel);
+    let ns = namespace_of_key(&key).unwrap_or_default();
+    let mut findings = Vec::new();
+
+    let mut note = parse_note(text);
+    // Archive notes are frozen history: the structural checks run on them, the type schemas do not.
+    if ns != ARCHIVE_NAMESPACE {
+        for problem in schema_problems(schemas, &note) {
+            findings.push(Finding::warning(id, None, problem));
+        }
+    }
+    let status = note.frontmatter.get("status").and_then(plain);
+    silence(&mut note, ns);
+
+    // Checks 1, 2, 3, 5 and the empty observation: the parser's own warnings, unchanged.
+    for w in &note.warnings {
+        findings.push(Finding::warning(id, w.line, w.message.clone()));
+    }
+    link_findings(conn, &key, id, ns, &note, &mut findings)?;
+    markdown_case_findings(conn, rel, id, &note, &mut findings)?;
+
+    // Check 6, first half: `status: superseded` needs an edge that confirms it (doc 03 §3).
+    if status.is_some_and(|s| s.eq_ignore_ascii_case("superseded")) && !is_superseded_by_an_edge(conn, &key)? {
+        findings.push(Finding::warning(
+            id,
+            None,
+            "status is \"superseded\", but no note links to it with supersedes".to_string(),
+        ));
+    }
+    // Check 8, first half: the entry point of a namespace is spelled `index.md`.
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    if key.matches('/').count() == 1 && file_stem(&key) == "index" && name != "index.md" {
+        findings.push(Finding::warning(
+            id,
+            None,
+            format!("entry point is spelled \"{name}\"; spell it index.md"),
+        ));
+    }
+    Ok(findings)
+}
+
 fn path_of(conn: &Connection, key: &str) -> Result<Option<String>> {
     Ok(conn
         .prepare_cached("SELECT path FROM notes WHERE key = ?1")?
@@ -482,32 +475,37 @@ fn path_of(conn: &Connection, key: &str) -> Result<Option<String>> {
         .optional()?)
 }
 
-/// Checks 4 and the unprefixed cross-namespace link, from the stored edges of one note. Every link is resolved again,
-/// because the index stores an ambiguous link as a plain ghost. Also collects the `supersedes` edges for check 6.
+/// True when some note has a `supersedes` edge that resolves to `key`.
+fn is_superseded_by_an_edge(conn: &Connection, key: &str) -> Result<bool> {
+    Ok(conn
+        .prepare_cached("SELECT 1 FROM edges WHERE target_key = ?1 AND lower(predicate) = 'supersedes' LIMIT 1")?
+        .query_row([key], |_| Ok(()))
+        .optional()?
+        .is_some())
+}
+
+/// The frontmatter `status` of a stored note, as text.
+fn status_of(conn: &Connection, key: &str) -> Result<Option<String>> {
+    let content: Option<String> = conn
+        .prepare_cached("SELECT content FROM notes WHERE key = ?1")?
+        .query_row([key], |r| r.get(0))
+        .optional()?;
+    Ok(content.and_then(|c| parse_note(&c).frontmatter.get("status").and_then(plain)))
+}
+
+/// Checks 4 and 6 (second half) and the unprefixed cross-namespace link, from the links of one note. Every link is
+/// resolved again, because the index stores an ambiguous link as a plain ghost.
 fn link_findings(
     conn: &Connection,
     key: &str,
     id: &str,
     ns: &str,
+    note: &ParsedNote,
     findings: &mut Vec<Finding>,
-    supersedes: &mut Vec<Supersedes>,
-    confirmed: &mut HashSet<String>,
 ) -> Result<()> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT predicate, target_ref, ref_key, position FROM edges WHERE source_key = ?1 ORDER BY position",
-    )?;
-    let edges = stmt
-        .query_map([key], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, u32>(3)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    for (predicate, target_ref, ref_key, line) in edges {
-        match resolve(conn, ns, &ref_key)? {
+    for edge in edge_rows(key, note).0 {
+        let (target_ref, line) = (edge.target_ref, edge.position);
+        match resolve(conn, ns, &edge.ref_key)? {
             Resolution::Ambiguous(ids) => {
                 findings.push(Finding::warning(id, Some(line), ambiguous_message(&target_ref, &ids)));
             }
@@ -527,14 +525,19 @@ fn link_findings(
                         ),
                     ));
                 }
-                if predicate.eq_ignore_ascii_case("supersedes") {
-                    confirmed.insert(target_key.clone());
-                    supersedes.push(Supersedes {
-                        source: id.to_string(),
-                        line,
-                        target_ref,
-                        target_key,
-                    });
+                // Check 6, second half: an edge whose target says otherwise. A target with no status says nothing.
+                if edge.predicate.eq_ignore_ascii_case("supersedes")
+                    && let Some(status) = status_of(conn, &target_key)?
+                    && !status.eq_ignore_ascii_case("superseded")
+                {
+                    let target = path_of(conn, &target_key)?.map_or(target_key.clone(), |p| note_id(&p).to_string());
+                    findings.push(Finding::warning(
+                        id,
+                        Some(line),
+                        format!(
+                            "supersedes [[{target_ref}]], but {target} has status \"{status}\", not \"superseded\""
+                        ),
+                    ));
                 }
             }
         }
@@ -581,38 +584,22 @@ fn markdown_case_findings(
     Ok(())
 }
 
-/// Check 8, first half, check 9 and the bootstrap hint (doc 02 §8). `namespaces` maps each namespace key to its
-/// folder as spelled on disk.
+/// Check 9 and the bootstrap hint (doc 02 §8). `namespaces` maps each namespace key to its folder as spelled on disk.
 fn namespace_findings(
     conn: &Connection,
     namespaces: &BTreeMap<String, String>,
     findings: &mut Vec<Finding>,
 ) -> Result<()> {
     for (ns, spelled) in namespaces {
-        match path_of(conn, &format!("{ns}/index"))? {
-            None if ns == BOOTSTRAP_NAMESPACE => findings.push(Finding::new(
-                Severity::Warning,
-                None,
-                None,
-                format!("namespace \"{spelled}\" has no index.md, so load_bootstrap returns an error"),
-            )),
-            None => findings.push(Finding::new(
-                Severity::Warning,
-                None,
-                None,
-                format!("namespace \"{spelled}\" has no index.md; load_namespace lists its notes instead"),
-            )),
-            Some(path) => {
-                let name = path.rsplit('/').next().unwrap_or(&path);
-                if name != "index.md" {
-                    findings.push(Finding::warning(
-                        note_id(&path),
-                        None,
-                        format!("entry point is spelled \"{name}\"; spell it index.md"),
-                    ));
-                }
-            }
+        if path_of(conn, &format!("{ns}/index"))?.is_some() {
+            continue;
         }
+        let message = if ns == BOOTSTRAP_NAMESPACE {
+            format!("namespace \"{spelled}\" has no index.md, so load_bootstrap returns an error")
+        } else {
+            format!("namespace \"{spelled}\" has no index.md; load_namespace lists its notes instead")
+        };
+        findings.push(Finding::new(Severity::Warning, None, None, message));
     }
     if !namespaces.contains_key(BOOTSTRAP_NAMESPACE) {
         findings.push(Finding::new(
@@ -623,6 +610,52 @@ fn namespace_findings(
         ));
     }
     Ok(())
+}
+
+/// One finding as a write result shows it (doc 07 §5.4, "Shape"): the line, when it has one, and the message of §12.2
+/// without the note id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteFinding {
+    pub line: Option<u32>,
+    pub message: String,
+}
+
+/// The findings a write introduced (doc 07 §5.4, "New"): those of `after` whose message `before` did not have. Line
+/// numbers are ignored, so a finding that only moved down the note stays silent, and a message with a number in it
+/// counts as new when the number changes. Findings with no line come first, then by line; the order of the checks
+/// decides within a line.
+pub(crate) fn new_findings(before: &[Finding], after: Vec<Finding>) -> Vec<NoteFinding> {
+    let known: HashSet<&str> = before.iter().map(|f| f.message.as_str()).collect();
+    let mut fresh: Vec<NoteFinding> = after
+        .into_iter()
+        .filter(|f| !known.contains(f.message.as_str()))
+        .map(|f| NoteFinding {
+            line: f.line,
+            message: f.message,
+        })
+        .collect();
+    fresh.sort_by_key(|f| f.line);
+    fresh
+}
+
+/// The lint block of a write result (doc 07 §5.4): empty when there is nothing new, so a clean write costs no tokens.
+pub fn render_block(findings: &[NoteFinding]) -> String {
+    if findings.is_empty() {
+        return String::new();
+    }
+    let n = findings.len();
+    let mut out = format!("lint: {}; the note is saved\n", counted(n, "warning", "warnings"));
+    for f in findings {
+        match f.line {
+            Some(line) => {
+                let _ = writeln!(out, "- line {line}: {}", f.message);
+            }
+            None => {
+                let _ = writeln!(out, "- {}", f.message);
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

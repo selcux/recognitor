@@ -17,6 +17,7 @@ use crate::delete_note::{BrokenLink, broken_section, counted};
 use crate::error::{Error, Result};
 use crate::hash::sha256_prefix;
 use crate::index::reindex_moved;
+use crate::lint::{NoteFinding, load_schemas_quiet, new_findings, note_findings, render_block};
 use crate::paths::{ARCHIVE_NAMESPACE, BOOTSTRAP_NAMESPACE, namespace_of_key, note_id, note_key};
 use crate::read::CHECKSUM_LEN;
 use crate::resolve::{NoteLookup, find_note, several_text};
@@ -39,6 +40,8 @@ pub enum MoveNote {
         relink: Vec<String>,
         /// What the move does to the note's place in the bootstrap (doc 07 §1.1).
         bootstrap: BootstrapChange,
+        /// The findings the move introduced in the moved note (doc 07 §5.4).
+        lint: Vec<NoteFinding>,
     },
     /// A normal result with nothing moved: the name matched several notes (doc 07 §6.3), or the new path is the note's
     /// own path (doc 07 §11, "Same path").
@@ -131,6 +134,7 @@ fn render_with(
             broken,
             relink,
             bootstrap,
+            lint,
         } => {
             let mut s = format!("moved: {old_id} -> {id}\n");
             s.push_str(&broken_section(broken));
@@ -140,6 +144,7 @@ fn render_with(
             if let Some(line) = after_links {
                 s.push_str(line);
             }
+            s.push_str(&render_block(lint));
             match bootstrap {
                 BootstrapChange::None => {}
                 BootstrapChange::Loads => {
@@ -271,8 +276,14 @@ fn move_it(
         }
         Err(e) => return Err(Error::io(new_abs, e)),
     }
+    // Doc 07 §5.4: the note's findings at its old place, in the index as it is now, against its findings at the new
+    // one once its rows moved. A path decides the namespace and the base of relative links, so a move can add some.
+    let schemas = load_schemas_quiet(root);
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let before = note_findings(tx, &schemas, &path, &text)?;
     // Doc 07 §5.1 step 5.
     let links = reindex_moved(tx, root, &key, &new_rel, bytes)?;
+    let lint = new_findings(&before, note_findings(tx, &schemas, &new_rel, &text)?);
     let mut relink: Vec<String> = links
         .iter()
         .filter(|l| l.into_note)
@@ -291,6 +302,7 @@ fn move_it(
             (true, false) => BootstrapChange::NoLonger,
             (false, false) => BootstrapChange::None,
         },
+        lint,
     })
 }
 
@@ -313,6 +325,7 @@ mod tests {
             broken,
             relink: relink.iter().map(|s| (*s).to_string()).collect(),
             bootstrap,
+            lint: Vec::new(),
         }
     }
 

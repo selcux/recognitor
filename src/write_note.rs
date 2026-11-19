@@ -15,6 +15,8 @@ use rusqlite::Transaction;
 use crate::error::{Error, Result};
 use crate::hash::sha256_prefix;
 use crate::index::reindex_written;
+use crate::lint::Finding;
+use crate::lint::{NoteFinding, Schemas, load_schemas_quiet, new_findings, note_findings, render_block};
 use crate::paths::{ARCHIVE_NAMESPACE, BOOTSTRAP_NAMESPACE, note_id, strip_md_ignore_case};
 use crate::read::{self, CHECKSUM_LEN};
 use crate::write::{bootstrap_notice, create_file, replace_file};
@@ -31,22 +33,26 @@ pub enum WriteNote {
         checksum: String,
         /// The note is in the bootstrap: the result carries the notice (doc 07 §1.1).
         bootstrap: bool,
+        /// The findings the write introduced (doc 07 §5.4): all of them for a create, the new ones for an overwrite.
+        lint: Vec<NoteFinding>,
     },
     /// Nothing was written. The text is the reason, plus the current data of what clashed (doc 07 §5.3). A tool
     /// returns it as an error.
     Refused(String),
 }
 
-/// The text of a `write_note` result (doc 07 §11, "Output"): `<id>  checksum: <12 hex>`, then the bootstrap notice
-/// when it applies, or the refusal.
+/// The text of a `write_note` result (doc 07 §11, "Output"): `<id>  checksum: <12 hex>`, then the lint block (§5.4)
+/// and the bootstrap notice when they apply, or the refusal.
 pub fn render(w: &WriteNote) -> String {
     match w {
         WriteNote::Written {
             id,
             checksum,
             bootstrap,
+            lint,
         } => {
             let mut s = format!("{id}  checksum: {checksum}\n");
+            s.push_str(&render_block(lint));
             if *bootstrap {
                 s.push_str(&bootstrap_notice(id));
                 s.push('\n');
@@ -301,6 +307,7 @@ fn write_note(
         return Ok(twins_refusal(&files));
     }
     let bytes = content.as_bytes();
+    let schemas = load_schemas_quiet(root);
     match (expected, files.pop()) {
         (None, None) => {
             let rel = join(&folder, &format!("{}.md", target.stem));
@@ -309,7 +316,7 @@ fn write_note(
                 fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
             }
             match create_file(&abs, bytes) {
-                Ok(()) => finish(tx, root, &rel, content),
+                Ok(()) => finish(tx, root, &rel, content, &schemas, Vec::new()),
                 // A file appeared since the check: the guard of a create (doc 07 §5.2), answered as if the check had
                 // found it.
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => match locate(root, target)? {
@@ -344,8 +351,10 @@ fn write_note(
             if !expected.eq_ignore_ascii_case(&sha256_prefix(&current, CHECKSUM_LEN)) {
                 return current_refusal(root, &found, CHANGED, max_tokens);
             }
+            // Doc 07 §5.4: the findings of the version being replaced, from the disk text, in the index as it is now.
+            let before = note_findings(tx, &schemas, &found, &String::from_utf8_lossy(&current))?;
             replace_file(&abs, bytes).map_err(|e| Error::io(&abs, e))?;
-            finish(tx, root, &found, content)
+            finish(tx, root, &found, content, &schemas, before)
         }
     }
 }
@@ -356,15 +365,25 @@ const EXISTS_TOO_LONG: &str = "The note already exists and is too long to replac
                                it with edit_note.";
 const CHANGED: &str = "The note changed since that checksum, so nothing was written.";
 
-/// Step 5 of doc 07 §5.1: the note's index rows, then the result.
-fn finish(tx: &Transaction<'_>, root: &Path, rel: &str, content: &str) -> Result<WriteNote> {
+/// Step 5 of doc 07 §5.1: the note's index rows, then the result. `before` holds the findings of the version being
+/// replaced, none for a create; the result shows the findings the new text has that those did not (§5.4).
+fn finish(
+    tx: &Transaction<'_>,
+    root: &Path,
+    rel: &str,
+    content: &str,
+    schemas: &Schemas,
+    before: Vec<Finding>,
+) -> Result<WriteNote> {
     reindex_written(tx, root, rel, content.as_bytes().to_vec())?;
+    let lint = new_findings(&before, note_findings(tx, schemas, rel, content)?);
     let id = note_id(rel).to_string();
     let namespace = id.split('/').next().unwrap_or_default().to_ascii_lowercase();
     Ok(WriteNote::Written {
         checksum: sha256_prefix(content.as_bytes(), CHECKSUM_LEN),
         bootstrap: namespace == BOOTSTRAP_NAMESPACE,
         id,
+        lint,
     })
 }
 
@@ -467,12 +486,14 @@ mod tests {
             id: "a/b".into(),
             checksum: "3fa9c1e2b7d0".into(),
             bootstrap: false,
+            lint: Vec::new(),
         };
         assert_eq!(render(&plain), "a/b  checksum: 3fa9c1e2b7d0\n");
         let boot = WriteNote::Written {
             id: "bootstrap/Profile".into(),
             checksum: "3fa9c1e2b7d0".into(),
             bootstrap: true,
+            lint: Vec::new(),
         };
         assert_eq!(
             render(&boot),

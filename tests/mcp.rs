@@ -1730,3 +1730,38 @@ fn move_note_to_its_own_path_is_a_normal_result_not_an_error() {
     }
     assert!(v.root.join("backend/Release.md").exists());
 }
+
+// Lint lines in write results (doc 07 §5.4): the same text from every surface that runs the tool.
+
+#[test]
+fn write_note_shows_its_lint_block_over_mcp_and_move_matches_the_cli() {
+    let notes = [
+        ("ideas/Caching.md", "# Caching\n\nA cache.\n"),
+        ("ideas/Notes.md", "# Notes\n\nSee [[Caching]].\n"),
+    ];
+    let checksum = recognitor::hash::sha256_prefix(notes[1].1.as_bytes(), 12);
+    let mcp_vault = TestVault::new(&notes);
+    let mut server = mcp_vault.server();
+
+    let long = "word ".repeat(70);
+    let content = format!("# Long\n\n{}\n", long.trim_end());
+    let text = server.ok("write_note", json!({"path": "design/Long", "content": content}));
+    assert_eq!(
+        text,
+        format!(
+            "design/Long  checksum: {}\nlint: 1 warning; the note is saved\n\
+             - line 3: summary paragraph is 349 characters; the limit is 300\n",
+            recognitor::hash::sha256_prefix(content.as_bytes(), 12)
+        )
+    );
+
+    let over_mcp = server.ok(
+        "move_note",
+        json!({"note": "ideas/Notes", "new_path": "ops/Notes", "expected_checksum": checksum}),
+    );
+    drop(server);
+    let cli_vault = TestVault::new(&notes);
+    let over_cli = cli_vault.cli_text(&["move", "ideas/Notes", "ops/Notes", "--relink", "none"]);
+    assert_eq!(over_mcp, over_cli);
+    assert!(over_cli.contains("lint: 1 warning; the note is saved\n- line 3: link \"Caching\" reaches ideas/Caching"));
+}

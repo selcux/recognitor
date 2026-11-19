@@ -17,6 +17,7 @@ use rusqlite::Transaction;
 use crate::error::{Error, Result};
 use crate::hash::sha256_prefix;
 use crate::index::reindex_written;
+use crate::lint::{NoteFinding, load_schemas_quiet, new_findings, note_findings, render_block};
 use crate::outline::{Outline, Section, outline};
 use crate::parse::{markdown_options, parse_note};
 use crate::paths::{ARCHIVE_NAMESPACE, BOOTSTRAP_NAMESPACE, namespace_of_key, note_id};
@@ -86,6 +87,8 @@ pub enum EditNote {
         checksum: String,
         /// The note is in the bootstrap: the result carries the notice (doc 07 §1.1).
         bootstrap: bool,
+        /// The findings the edit introduced (doc 07 §5.4).
+        lint: Vec<NoteFinding>,
     },
     /// `add_observation` or `add_relation` with a line the section already has: nothing was written (doc 07 §9).
     AlreadyThere { id: String, checksum: String },
@@ -96,16 +99,18 @@ pub enum EditNote {
     Refused(String),
 }
 
-/// The text of an `edit_note` result (doc 07 §9, "Result"): `<id>  checksum: <12 hex>`, then the bootstrap notice
-/// when it applies. Already there: `Already there, nothing was written.` above the result line.
+/// The text of an `edit_note` result (doc 07 §9, "Result"): `<id>  checksum: <12 hex>`, then the lint block (§5.4) and
+/// the bootstrap notice when they apply. Already there: `Already there, nothing was written.` above the result line.
 pub fn render(e: &EditNote) -> String {
     match e {
         EditNote::Written {
             id,
             checksum,
             bootstrap,
+            lint,
         } => {
             let mut s = format!("{id}  checksum: {checksum}\n");
+            s.push_str(&render_block(lint));
             if *bootstrap {
                 s.push_str(&bootstrap_notice(id));
                 s.push('\n');
@@ -203,14 +208,21 @@ fn edit(tx: &Transaction<'_>, root: &Path, note: &str, op: &Op, max_tokens: usiz
         }
         Step::Done(result) => return Ok(result),
     };
+    // Doc 07 §5.4: the findings of the text on disk, in the index as it is now, against those of the new text once its
+    // rows are written.
+    let schemas = load_schemas_quiet(root);
+    let before = note_findings(tx, &schemas, &path, text)?;
     let new_bytes = new_text.into_bytes();
     replace_file(&abs, &new_bytes).map_err(|e| Error::io(&abs, e))?;
     let checksum = sha256_prefix(&new_bytes, CHECKSUM_LEN);
+    let written = String::from_utf8_lossy(&new_bytes).into_owned();
     reindex_written(tx, root, &path, new_bytes)?;
+    let lint = new_findings(&before, note_findings(tx, &schemas, &path, &written)?);
     Ok(EditNote::Written {
         id,
         checksum,
         bootstrap: ns == BOOTSTRAP_NAMESPACE,
+        lint,
     })
 }
 
@@ -1059,12 +1071,14 @@ mod tests {
             id: "a/T".into(),
             checksum: "3fa9c1e2b7d0".into(),
             bootstrap: false,
+            lint: Vec::new(),
         };
         assert_eq!(render(&done), "a/T  checksum: 3fa9c1e2b7d0\n");
         let boot = EditNote::Written {
             id: "bootstrap/P".into(),
             checksum: "3fa9c1e2b7d0".into(),
             bootstrap: true,
+            lint: Vec::new(),
         };
         assert_eq!(
             render(&boot),
