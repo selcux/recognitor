@@ -13,7 +13,8 @@
 //! **The relink command.** `relink`'s `old` is the id the moved note had. A ghost's `ref_key` says it for every link
 //! that names a path: `/ns/a/name` (a relative or Markdown link, from the vault root), `ns::a/name` and `ns::name`
 //! are `ns/a/name`, and a path with no prefix (`a/name`) starts at the linking note's namespace, so its `old` can
-//! differ from note to note and each `old` gets its own command. A bare name (`Name`) does not say where the note
+//! differ from note to note and each `old` gets its own command. `old` is spelled as the link writes it (the spelling
+//! the summary line shows when links differ in case); a relative or Markdown link has only its key. A bare name (`Name`) does not say where the note
 //! was, so no command is printed for it; the hint never fires for one anyway, since a note with that filename would
 //! have resolved the link.
 
@@ -24,7 +25,7 @@ use rusqlite::{Connection, params};
 
 use crate::error::Result;
 use crate::move_cli::finish_command;
-use crate::paths::{note_id, titled_id};
+use crate::paths::{note_id, strip_md_ignore_case, titled_id};
 use crate::resolve::{Resolution, link_key, resolve};
 
 /// The note a ghost probably became.
@@ -125,7 +126,7 @@ pub fn ghosts(conn: &Connection, link: Option<&str>) -> Result<Ghosts> {
         if wanted.is_some() {
             ghost.sources = sources(conn, &ref_key)?;
             if let Some(h) = &ghost.hint {
-                ghost.fixes = fixes(conn, &ref_key, &h.id)?;
+                ghost.fixes = fixes(conn, &ref_key, &ghost.name, &h.id)?;
             }
         }
         out.push(ghost);
@@ -214,17 +215,19 @@ fn hint(conn: &Connection, ref_key: &str) -> Result<Option<Hint>> {
 /// A linking note's row: id, title shown, namespace, predicate, link as written, line.
 struct SourceRow {
     source: Source,
-    namespace: String,
+    /// The namespace folder as the note's path spells it.
+    folder: String,
 }
 
 fn source_rows(conn: &Connection, ref_key: &str) -> Result<Vec<SourceRow>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT n.path, n.title, n.title_key, n.name_key, n.namespace, e.predicate, e.target_ref, e.position \
+        "SELECT n.path, n.title, n.title_key, n.name_key, e.predicate, e.target_ref, e.position \
          FROM edges e JOIN notes n ON n.key = e.source_key WHERE e.target_key IS NULL AND e.ref_key = ?1",
     )?;
     let mut rows = stmt
         .query_map(params![ref_key], |r| {
             let path: String = r.get(0)?;
+            let folder = path.split('/').next().unwrap_or_default().to_string();
             let title: String = r.get(1)?;
             let title_key: String = r.get(2)?;
             let name_key: String = r.get(3)?;
@@ -232,11 +235,11 @@ fn source_rows(conn: &Connection, ref_key: &str) -> Result<Vec<SourceRow>> {
                 source: Source {
                     id: note_id(&path).to_string(),
                     title: (title_key != name_key).then_some(title),
-                    predicate: r.get(5)?,
-                    target_ref: r.get(6)?,
-                    line: r.get(7)?,
+                    predicate: r.get(4)?,
+                    target_ref: r.get(5)?,
+                    line: r.get(6)?,
                 },
-                namespace: r.get(4)?,
+                folder,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -257,15 +260,18 @@ fn sources(conn: &Connection, ref_key: &str) -> Result<Vec<Source>> {
     Ok(source_rows(conn, ref_key)?.into_iter().map(|r| r.source).collect())
 }
 
-/// The id a note had when a link with this key, written in a note of `source_ns`, reached it: `relink`'s `old`.
-/// `None` for a bare name, which does not say where the note was, and for an id `relink` would refuse.
-fn old_id(ref_key: &str, source_ns: &str) -> Option<String> {
+/// The id a note had when a link, written in a note whose namespace folder is `folder`, reached it: `relink`'s `old`.
+/// It is spelled as the link writes it (doc 07 §12.3, "Spelling of `old`"): `name` is the spelling the summary line
+/// shows. A relative or Markdown link has only its key, so its `old` is the key without the leading `/`. `None` for a
+/// bare name, which does not say where the note was, and for an id `relink` would refuse.
+fn old_id(ref_key: &str, name: &str, folder: &str) -> Option<String> {
     let old = if let Some(full) = ref_key.strip_prefix('/') {
         full.to_string()
     } else {
-        match ref_key.split_once("::") {
+        let written = strip_md_ignore_case(name).unwrap_or(name);
+        match written.split_once("::") {
             Some((ns, rest)) => format!("{ns}/{rest}"),
-            None if ref_key.contains('/') => format!("{source_ns}/{ref_key}"),
+            None if written.contains('/') => format!("{folder}/{written}"),
             None => return None,
         }
     };
@@ -273,10 +279,10 @@ fn old_id(ref_key: &str, source_ns: &str) -> Option<String> {
 }
 
 /// One `relink` call per `old`, naming every linking note that reaches the ghost by it.
-fn fixes(conn: &Connection, ref_key: &str, new: &str) -> Result<Vec<Fix>> {
+fn fixes(conn: &Connection, ref_key: &str, name: &str, new: &str) -> Result<Vec<Fix>> {
     let mut by_old: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for row in source_rows(conn, ref_key)? {
-        let Some(old) = old_id(ref_key, &row.namespace) else {
+        let Some(old) = old_id(ref_key, name, &row.folder) else {
             continue;
         };
         let notes = by_old.entry(old).or_default();

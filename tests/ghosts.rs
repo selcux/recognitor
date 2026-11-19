@@ -271,7 +271,7 @@ fn the_detail_lists_the_linking_notes_and_the_command_that_fixes_them() {
              - ops/Deploy: line 5: links_to ideas::Caching\n\
              - ops/Rollback: line 5: links_to ideas::Caching\n\
              - ops/Runbook: line 5: links_to ideas::Caching\n\
-             recognitor relink \"ideas/caching\" \"design/Caching\" \"ops/Deploy\" \"ops/Rollback\" \"ops/Runbook\" \
+             recognitor relink \"ideas/Caching\" \"design/Caching\" \"ops/Deploy\" \"ops/Rollback\" \"ops/Runbook\" \
              --vault \"{vault}\"\n"
         )
     );
@@ -327,7 +327,7 @@ fn a_line_number_and_a_predicate_come_from_the_link() {
         format!(
             "ideas::Caching   1 link   \u{2192} maybe moved to design/Caching\n\
              - ops/Runbook: line 8: part_of ideas::Caching\n\
-             recognitor relink \"ideas/caching\" \"design/Caching\" \"ops/Runbook\" --vault \"{}\"\n",
+             recognitor relink \"ideas/Caching\" \"design/Caching\" \"ops/Runbook\" --vault \"{}\"\n",
             v.root.display()
         )
     );
@@ -412,8 +412,8 @@ fn a_path_without_a_prefix_starts_at_the_linking_notes_namespace() {
     );
     let d = v.detail("b/caching");
     let out = ok(&d);
-    assert!(out.contains("recognitor relink \"ops/b/caching\" \"design/Caching\" \"ops/Runbook\" --vault"));
-    assert!(out.contains("recognitor relink \"qa/b/caching\" \"design/Caching\" \"qa/Plan\" --vault"));
+    assert!(out.contains("recognitor relink \"ops/b/Caching\" \"design/Caching\" \"ops/Runbook\" --vault"));
+    assert!(out.contains("recognitor relink \"qa/b/Caching\" \"design/Caching\" \"qa/Plan\" --vault"));
 }
 
 #[test]
@@ -524,4 +524,48 @@ fn bad_arguments_exit_2() {
         "{}",
         r.stderr
     );
+}
+
+#[test]
+fn old_keeps_the_spelling_of_the_link() {
+    // Doc 07 §12.3, "Spelling of `old`": a prefixed link and an unprefixed path keep the case the link wrote, and the
+    // namespace of an unprefixed path is the linking note's folder as spelled on disk. Links that differ only in case
+    // use the spelling the summary line shows (the smallest, as doc 05 §3.5 picks it). A relative link has only its
+    // key.
+    let v = TestVault::new(&[
+        ("design/index.md", INDEX),
+        ("design/Caching.md", &note("Caching", "Text.")),
+        ("design/Ghost target.md", &note("Ghost target", "Text.")),
+        ("design/Queue.md", &note("Queue", "Text.")),
+        ("Tmp/Note.md", &note("Note", "Reads [[old/Ghost target]].")),
+        ("ops/Runbook.md", &note("Runbook", "Reads [[Ideas::Old/Caching]].")),
+        ("ops/Deploy.md", &note("Deploy", "Reads [[IDEAS::old/Caching]].")),
+        ("ops/Relative.md", &note("Relative", "Reads [[../Ideas/Queue]].")),
+    ]);
+    let vault = v.root.display();
+    assert_eq!(
+        ok(&v.detail("old/ghost target")),
+        format!(
+            "old/Ghost target   1 link   \u{2192} maybe moved to design/Ghost target\n\
+             - Tmp/Note: line 5: links_to old/Ghost target\n\
+             recognitor relink \"Tmp/old/Ghost target\" \"design/Ghost target\" \"Tmp/Note\" --vault \"{vault}\"\n"
+        )
+    );
+    // `IDEAS::old/Caching` sorts before `Ideas::Old/Caching`, so the summary shows it, and `old` follows.
+    let line = format!(
+        "recognitor relink \"IDEAS/old/Caching\" \"design/Caching\" \"ops/Deploy\" \"ops/Runbook\" --vault \"{vault}\""
+    );
+    let d = v.detail("ideas::old/caching");
+    assert!(ok(&d).contains(&format!("{line}\n")), "{}", d.stdout);
+    let relative = format!("recognitor relink \"ideas/queue\" \"design/Queue\" \"ops/Relative\" --vault \"{vault}\"");
+    assert!(ok(&v.detail("/ideas/queue")).contains(&format!("{relative}\n")));
+    // Whatever the spelling, the printed lines clear the ghosts.
+    let first =
+        format!("recognitor relink \"Tmp/old/Ghost target\" \"design/Ghost target\" \"Tmp/Note\" --vault \"{vault}\"");
+    for line in [first, line, relative] {
+        let r = v.run_printed(&line);
+        assert!(ok(&r).starts_with("relinked: "), "{line}: {}", r.stdout);
+        assert!(!r.stdout.contains("warning"), "{line}: {}", r.stdout);
+    }
+    assert_eq!(ok(&v.ghosts()), "No ghosts.\n");
 }
