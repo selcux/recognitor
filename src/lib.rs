@@ -10,6 +10,7 @@ pub mod db;
 pub mod delete_note;
 pub mod edit_note;
 pub mod error;
+pub mod ghosts;
 pub mod hash;
 pub mod index;
 pub mod lint;

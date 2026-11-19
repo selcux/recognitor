@@ -1,7 +1,7 @@
 //! `recognitor` CLI: a thin layer over the library. Commands are defined in doc 07 §12.
 //!
-//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `move`, `relink`, `lint`, `mcp` and
-//! `config get/set`. The
+//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `move`, `relink`, `lint`, `ghosts`, `mcp`
+//! and `config get/set`. The
 //! vault comes from `--vault`, else `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
 //!
 //! `move` is the one command that talks to the user (doc 07 §6.1): it moves the note, prints the broken links, asks which
@@ -28,6 +28,7 @@ const USAGE: &str = "usage: recognitor <command> [--vault <path>] [--report]
        recognitor move <note> <new_path> [--relink all|none|ask] [--vault <path>]
        recognitor relink <old> <new> <note>... [--vault <path>]
        recognitor lint [--strict] [--vault <path>]
+       recognitor ghosts [<link>] [--vault <path>]
        recognitor mcp [--vault <path>]
        recognitor config get <key>
        recognitor config set <key> <value>
@@ -43,6 +44,7 @@ commands:
   relink <old> <new> <note>...
                             rewrite the links to a moved note in the notes given; old is its id before the move
   lint                      check the vault against doc 02 §8; exits 1 on an error, with --strict on a warning too
+  ghosts [<link>]           the links that reach no note, with a hint where a moved note went; <link> lists its linking notes
   mcp                       serve the tools over MCP on stdio (one server per client session)
   config get <key>          print a config value
   config set <key> <value>  set a config value
@@ -111,6 +113,9 @@ enum Command {
     },
     Lint {
         strict: bool,
+    },
+    Ghosts {
+        link: Option<String>,
     },
     Mcp,
     Config(ConfigCommand),
@@ -214,6 +219,11 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
         },
         ("relink", _) => return Err("relink needs old, new and at least one note".to_string()),
         ("lint", []) => Command::Lint { strict },
+        ("ghosts", []) => Command::Ghosts { link: None },
+        ("ghosts", [link]) => Command::Ghosts {
+            link: Some(link.clone()),
+        },
+        ("ghosts", [_, extra, ..]) => return Err(format!("unexpected argument: {extra}")),
         ("mcp", []) => Command::Mcp,
         ("config", [sub, key]) if sub == "get" => Command::Config(ConfigCommand::Get(key.clone())),
         ("config", [sub, key, value]) if sub == "set" => {
@@ -292,6 +302,10 @@ fn run(args: &Args) -> recognitor::Result<String> {
             run_move(&mut index, args.vault.as_deref(), note, new_path, *relink, max_tokens)
         }
         Command::Relink { old, new, notes } => Ok(recognitor::relink::render(&index.relink(old, new, notes)?)),
+        Command::Ghosts { link } => Ok(recognitor::ghosts::render(
+            &index.ghosts(link.as_deref())?,
+            args.vault.as_deref(),
+        )),
         Command::Config(cmd) => run_config(cmd),
         // `main` runs `lint` itself, because its exit code depends on what it finds.
         Command::Lint { .. } => Ok(String::new()),
