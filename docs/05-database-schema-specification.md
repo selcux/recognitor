@@ -289,13 +289,14 @@ Surfaces unwritten notes ranked by inbound reference count:
 ```sql
 SELECT
     MIN(e.target_ref) AS name,                 -- One spelling, for display
-    COUNT(*) AS mention_count,
-    GROUP_CONCAT(DISTINCT e.predicate) AS predicates
+    COUNT(*) AS mention_count
 FROM edges e
 WHERE e.target_key IS NULL
 GROUP BY e.ref_key                             -- [[Gall's law]] and [[Gall's Law]] are one ghost
-ORDER BY mention_count DESC;
+ORDER BY mention_count DESC, e.ref_key;
 ```
+
+Output and the `ghosts <link>` detail view: [07-interface-contracts.md §12.3](07-interface-contracts.md#123-ghosts-link).
 
 The "maybe moved to" hint ([07-interface-contracts.md §6.2](07-interface-contracts.md#62-moves-outside-recognitor)) looks up the last part of each ghost's `ref_key` (after the last `/` or `::`) in `notes.name_key`, and shows a hint only when exactly one note matches.
 

@@ -41,7 +41,7 @@ A note's store comes from its namespace: `bootstrap`, `archive`, or any other na
 | Surface | Tools / commands |
 | :--- | :--- |
 | **MCP** | `load_bootstrap`, `load_namespace`, `search`, `context`, `read_note`, `write_note`, `edit_note`, `move_note`, `relink`, `delete_note` |
-| **CLI** | `bootstrap [--list]`, `search`, `context`, `read`, `move`, `relink`, `ghosts`, `trash empty`, `sync`, `rebuild`, `lint [--strict]`, `config get/set` |
+| **CLI** | `bootstrap [--list]`, `search`, `context`, `read`, `move`, `relink`, `ghosts [<link>]`, `trash empty`, `sync`, `rebuild`, `lint [--strict]`, `config get/set` |
 
 - **CLI-only:** `ghosts` (backlog gardening is a human job, not an agent job).
 - **Rejected: a `query` command for raw SQL.** The schema is a disposable projection that changes without migrations; exposing raw SQL would turn it into an API people depend on.
@@ -358,12 +358,13 @@ notice: bootstrap/Profile loads as instructions at session start
 A move in Obsidian, Explorer or git looks to the sweep like one file deleted and one file created. The sweep does not report it: the sweep usually runs inside another tool call, whose output has no place for the report. The links the move broke become ghosts instead, and `recognitor ghosts` shows where the note probably went:
 
 ```
-ideas/caching   3 links   → maybe moved to design/Caching
-Gall's law      2 links
+ideas::Caching   3 links   → maybe moved to design/Caching
+Gall's law       2 links
 ```
 
 - **The hint** is worked out when the command runs, so nothing is stored. It shows only when exactly one note has the ghost's filename (`notes.name_key`); for a shared name such as `index`, it shows nothing.
-- **Fix:** `recognitor relink` on the CLI, or `relink` through an agent (§6.1).
+- **Only path and prefixed links get a hint.** A bare name that matched a note's filename would have resolved ([03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)), so a bare-name ghost never has one. In a vault of bare-name links, `ghosts` lists what to fix, but cannot say where a note went.
+- **Fix:** `ghosts <link>` lists the linking notes and, with a hint, prints the `recognitor relink` command (§12.3); or `relink` through an agent (§6.1).
 
 ### 6.3 Notes Named in Tool Calls
 
@@ -628,7 +629,7 @@ The CLI has no `write`, `edit` or `delete` commands. A human edits notes in an e
 | :--- | :--- |
 | `bootstrap [--list]`, `search`, `context`, `read` | Inspect what agents see; the session-start hook runs `bootstrap` ([04-information-stores-and-lifecycle.md §5.1](04-information-stores-and-lifecycle.md)) |
 | `move`, `relink` | A move needs the link check and `relink` (§6.1); a move made outside Recognitor needs `relink` alone (§6.2) |
-| `ghosts`, `lint [--strict]`, `trash empty` | Maintenance |
+| `ghosts [<link>]`, `lint [--strict]`, `trash empty` | Maintenance |
 | `sync`, `rebuild`, `config get/set` | Engine control |
 
 - **Same arguments as MCP:** a CLI command takes its MCP tool's arguments by the same names. The first required argument is positional, and every optional one is an option with its name: `search <query> --ns <name> --page <n>`, `context <note> --page <n>`, `read <note> --section <heading> --query <text>`. A tool with several required arguments takes them all as positionals, in order, a list last: `relink <old> <new> <note>...`. The one exception is `move`, which takes no `expected_checksum` (§12.1).
@@ -722,6 +723,50 @@ lint: 0 errors, 3 warnings, 0 hints; 106 notes checked
 | `schemas.toml` | `cannot be read: <reason>`; `is not valid TOML, so no schema is checked: line <n>: <reason>`; `unknown key "<key>"; the file holds only [type.<name>] blocks`; `"type" must be a table of [type.<name>] blocks`; `[type.<name>] must be a table`; `[type.<name>] unknown key "<key>"; the keys are required_fields, allowed, required_categories, required_relations`; `[type.<name>] <key> must be a list of strings`, where an entry inside `allowed` is named `allowed.<field>`; `[type.<name>] allowed must be a table of lists, like { status = ["draft"] }` |
 
 - **Usage messages:** `--strict belongs to lint`.
+
+### 12.3 `ghosts [<link>]`
+
+Lists the ghosts (links that reach no note, [03-markdown-format-and-edge-syntax.md §4](03-markdown-format-and-edge-syntax.md#4-note-identity-and-link-resolution)), most links first, with the "maybe moved to" hint of §6.2. Read-only. The query is [05-database-schema-specification.md §3.5](05-database-schema-specification.md#35-ghost-notes-discovery-unwritten-concept-backlog).
+
+```
+$ recognitor ghosts
+ideas::Caching   3 links   → maybe moved to design/Caching
+Gall's law       2 links
+```
+
+- **Name:** the link as written; links that differ only in case are one ghost, shown in one spelling. A relative or Markdown link shows its key, the path from the vault root with a leading `/` (`/ideas/caching`), which also works as `<link>`.
+- **Count:** `1 link`, `<n> links`.
+- **Order:** most links first, then by key.
+- **Ambiguous:** a link that matches several notes is a ghost too (doc 03 §4, step 5). It is marked `(ambiguous)` and gets no hint, because a single filename match would point at the wrong note.
+- **Stores:** links from bootstrap notes count; archive notes have no edges, so they add none.
+- **No ghosts:** `No ghosts.`
+- **Sync:** like `search`, it syncs first unless the last sync is under 2 seconds old.
+- **No cap:** every ghost is listed, as every broken link is in §10.
+
+**`ghosts <link>`** shows one ghost in full: its summary line, then one line per link to it, in §10's order, then the `relink` command when there is a hint.
+
+```
+$ recognitor ghosts ideas::Caching
+ideas::Caching   3 links   → maybe moved to design/Caching
+- ops/Runbook: line 12: links_to ideas::Caching
+- ops/Runbook: line 30: relates_to ideas::Caching
+- ops/Deploy: line 4: links_to ideas::Caching
+recognitor relink "ideas/Caching" "design/Caching" "ops/Runbook" "ops/Deploy"
+```
+
+- **Link lines:** `- <id>: line <n>: <predicate> <link as written>`; the id carries `, titled "<title>"` when the title differs (§4.2), and so does the hint's target.
+- **Matching `<link>`:** its key, ignoring case, or any spelling as written, so a link copied from a note finds its ghost. Several matching ghosts print as blocks separated by a blank line. None: `No ghost matches "<link>".`, exit 0.
+- **An ambiguous ghost** adds `matches <n> notes: <id>, <id>` and prints no command.
+- **The `relink` command** is quoted like `move`'s (§12.1), with `--vault "<path>"` only when `--vault` was given. Its `old` is the id the link pointed to:
+
+| Link | `old` |
+| :--- | :--- |
+| `/ns/folder/name` (a relative or Markdown link) | `ns/folder/name` |
+| `ns::folder/name`, `ns::name` | `ns/folder/name`, `ns/name` |
+| `folder/name`, no prefix | `<linking note's namespace>/folder/name`; one command per distinct `old` |
+| A bare name | No command: it never has a hint (§6.2) |
+
+- **Usage messages:** `unexpected argument: <word>` for a second positional.
 
 ---
 
