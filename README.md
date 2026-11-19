@@ -121,7 +121,7 @@ Handles OAuth2 token refresh and session rotation across backend services.
 
 `part_of` places the flow inside the security architecture. `supersedes` records that it replaced cookie auth. `depends_on` points at the ops checklist you follow before a release, and the `ops::` prefix names that other namespace. `relates_to [[Token Rotation]]` names the note for the rotation rule. Until that file exists, the link stays a ghost. You write each link in one direction. The index answers the other direction, so the target note can list who points at it. A few relation words have a job: `part_of` and `has_part` describe a tree, `indexes` marks a note the bootstrap should load, and `supersedes` marks an older note as history. Any other word, such as `depends_on`, is a free association.
 
-A wikilink finds its target in this order: the full path, then `namespace::Name`, then the same name inside the linking note’s namespace, then a name that exists in only one namespace. If nothing matches, or two notes share the name, the link is kept with an empty target. That missing note is a **ghost**. When the note is written later, by a tool or by hand, the target fills in. Deleting the note turns the link back into a ghost.
+A wikilink finds its target in this order: the full path, then `namespace::Name`, then the same name inside the linking note’s namespace, then a name that exists in only one namespace. If nothing matches, or two notes share the name, the link is kept with an empty target. That missing note is a **ghost**. When the note is written later, by a tool or by hand, the target fills in. Deleting the note turns the link back into a ghost. `recognitor ghosts` lists every ghost, most links first.
 
 ```mermaid
 flowchart LR
@@ -177,6 +177,14 @@ sequenceDiagram
   end
 ```
 
+**Problems the write left.** When a write leaves a problem in the note, such as a summary over 300 characters or an observation date that does not parse, the answer lists it under the result. Only problems that this write created show up. Older ones are left to `recognitor lint`, so the assistant does not start fixing notes nobody asked it to touch.
+
+```
+design/Caching  checksum: 3f9a2c41b7e0
+lint: 1 warning; the note is saved
+- line 8: summary paragraph is 366 characters; the limit is 300
+```
+
 **One writer at a time.** Writes queue on SQLite's write lock, so several agents and the CLI can share one vault. Reads never wait for a write.
 
 **Long notes.** A note over the read limit (4,000 tokens by default) is cut to its best sections. The assistant can still move or delete it, but it cannot replace it whole, because it has seen only part of it. It edits such a note one section at a time.
@@ -214,7 +222,7 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 - **Links by name usually survive.** `[[Caching]]` keeps working unless the move makes the name match two notes. Paths and `namespace::` prefixes break.
 - **Links inside the moved note** (the first line above) are fixed with `edit_note`, because `relink` only rewrites links that point to the moved note.
 - **`relink` writes each new link in the shortest form** that still reaches the note from the linking note.
-- **A move made in an editor or a file manager** looks like a delete plus a create, so its broken links become ghosts. `recognitor relink` fixes them once you know the old id.
+- **A move made in an editor or a file manager** looks like a delete plus a create, so its broken links become ghosts. `recognitor ghosts` lists them. For a path or `namespace::` link it guesses where the note went, and `recognitor ghosts <link>` prints the `recognitor relink` command that fixes it. A link by bare name gets no guess, because a note with that name would still resolve it; you fix it by hand.
 - **On the command line,** `recognitor move` does both steps in one command. It prints the broken links, asks which notes to fix (Enter means none), and relinks them. Without a terminal it moves and relinks nothing, unless you pass `--relink all`.
 
 ## Tools
