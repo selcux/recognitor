@@ -1,6 +1,11 @@
 /target
+/benches/*
+!/benches/retrieval/
+/benches/retrieval/*
+!/benches/retrieval/questions.example.json
 
 AGENTS.md
 .claude/
 .cursor/
 .ai-mediator.json
+repomix-output.txt

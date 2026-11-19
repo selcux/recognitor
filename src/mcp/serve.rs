@@ -28,13 +28,7 @@ struct Recognitor {
 }
 
 /// The five tools that do not change a note (doc 07 §1.1 / §2.1). Clients use `readOnlyHint` to group them.
-const READ_TOOLS: &[&str] = &[
-    "load_bootstrap",
-    "load_namespace",
-    "search",
-    "context",
-    "read_note",
-];
+const READ_TOOLS: &[&str] = &["load_bootstrap", "load_namespace", "search", "context", "read_note"];
 
 fn list() -> Vec<Tool> {
     tools::TOOLS

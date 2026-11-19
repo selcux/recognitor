@@ -338,8 +338,7 @@ fn tools_list_has_the_read_tools_and_the_write_tools() {
     // Doc 07 §2.1: the five reads send readOnlyHint; the writes send no annotations.
     for tool in tools.iter().take(5) {
         assert_eq!(
-            tool["annotations"]["readOnlyHint"],
-            true,
+            tool["annotations"]["readOnlyHint"], true,
             "{} should be read-only",
             tool["name"]
         );

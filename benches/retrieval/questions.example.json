@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "vault_snapshot": "example",
+  "questions": [
+    {
+      "id": "q01",
+      "query": "OAuth token refresh rotation",
+      "namespace": "backend",
+      "expected_notes": ["backend/Auth Flow"],
+      "tags": ["lexical"]
+    },
+    {
+      "id": "q02",
+      "query": "deploy checklist before release",
+      "namespace": "backend",
+      "expected_notes": ["ops/Deploy Checklist", "backend/Release"],
+      "tags": ["relation-1hop", "cross-namespace"]
+    },
+    {
+      "id": "q03",
+      "query": "staging deployment steps checklist",
+      "namespace": "ops",
+      "expected_notes": ["ops/Deploy Checklist"],
+      "tags": ["namespace-perspective"]
+    },
+    {
+      "id": "q04",
+      "query": "release checklist and deployment",
+      "namespace": null,
+      "expected_notes": ["backend/Release", "ops/Deploy Checklist"],
+      "tags": ["multi-hop"]
+    }
+  ]
+}

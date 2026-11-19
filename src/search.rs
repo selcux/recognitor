@@ -30,6 +30,58 @@ pub const PAGE_TOKEN_BUDGET: usize = 1000;
 /// PLACEHOLDER: as [`NS_BOOST`], for a note outside `ns` that a note in `ns` links to.
 pub const LINKED_BOOST: f64 = 0.25;
 
+/// How candidate notes and links are boosted during search ranking (doc 07 §4, doc 02 §6).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RankingConfig {
+    /// Boost applied to notes inside the target namespace: score = -rank * (1 + ns_boost).
+    pub ns_boost: f64,
+    /// Boost applied when a note in `ns` links to this candidate via an explicit `## Relations` edge (`is_inline = 0`).
+    pub rel_boost: f64,
+    /// Boost applied when a note in `ns` links to this candidate via an inline link (`is_inline = 1`).
+    pub inline_boost: f64,
+    /// Hub dampening scaling for high-degree source notes.
+    pub hub_dampening: HubDampening,
+    /// Maximum cumulative linked boost for a single candidate.
+    pub max_linked_boost: f64,
+    /// Number of candidates fetched from FTS5 before re-ranking.
+    pub candidates: usize,
+    /// Number of hits per page.
+    pub page_size: usize,
+}
+
+/// How high-degree source notes have their outgoing edge weights dampened (doc 02 §6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HubDampening {
+    #[default]
+    None,
+    Log,
+    Sqrt,
+}
+
+impl Default for RankingConfig {
+    fn default() -> Self {
+        Self {
+            ns_boost: NS_BOOST,
+            rel_boost: LINKED_BOOST,
+            inline_boost: LINKED_BOOST,
+            hub_dampening: HubDampening::None,
+            max_linked_boost: 1.0,
+            candidates: CANDIDATES,
+            page_size: PAGE_SIZE,
+        }
+    }
+}
+
+/// Diagnostic trace from search execution for benchmarks and evaluation.
+#[derive(Debug, Clone)]
+pub struct SearchTrace {
+    pub page: SearchPage,
+    /// Keys of all FTS5 candidate notes (in raw BM25 rank order) before re-ranking.
+    pub candidate_keys: Vec<String>,
+    /// Keys of all candidate notes after re-ranking and boost calculation.
+    pub ranked_keys: Vec<String>,
+}
+
 /// The line before the hits that match only some of the words (doc 07 §4.2, "Some of the words").
 pub const FILL_SEPARATOR: &str = "Notes with only some of the words:";
 
@@ -94,7 +146,7 @@ struct Candidate {
 /// The text never reaches FTS5 as query syntax: [`match_expression`] quotes every word (doc 07 §4, "Query text").
 /// A query with no words is refused with [`Error::EmptyQuery`].
 pub fn search(conn: &Connection, query: &str, ns: Option<&str>, page: usize) -> Result<SearchPage> {
-    search_with_page_size(conn, query, ns, page, PAGE_SIZE)
+    search_with_config(conn, query, ns, page, &RankingConfig::default())
 }
 
 /// [`search`] with another page size; the tests use it to reproduce the example in doc 07 §4.2.
@@ -106,41 +158,75 @@ pub fn search_with_page_size(
     page: usize,
     page_size: usize,
 ) -> Result<SearchPage> {
+    search_with_config(
+        conn,
+        query,
+        ns,
+        page,
+        &RankingConfig {
+            page_size,
+            ..Default::default()
+        },
+    )
+}
+
+/// [`search`] with a custom [`RankingConfig`].
+pub fn search_with_config(
+    conn: &Connection,
+    query: &str,
+    ns: Option<&str>,
+    page: usize,
+    cfg: &RankingConfig,
+) -> Result<SearchPage> {
+    Ok(search_with_trace(conn, query, ns, page, cfg)?.page)
+}
+
+/// Runs full-text search with [`RankingConfig`] and returns a [`SearchTrace`] with diagnostic candidate pools.
+pub fn search_with_trace(
+    conn: &Connection,
+    query: &str,
+    ns: Option<&str>,
+    page: usize,
+    cfg: &RankingConfig,
+) -> Result<SearchTrace> {
     let page = page.max(1);
     let parts = query_parts(query);
     let expr = expression_of(&parts, " AND ").ok_or(Error::EmptyQuery)?;
     // The observation lines try every word first, then any word (doc 07 §4.2). One word has one form.
     let any_expr = expression_of(&parts, " OR ").filter(|any| *any != expr);
     let ns_key = ns.map(str::to_lowercase);
-    let mut candidates = candidates(conn, &expr, ns_key.as_deref())?;
-    let matches = if candidates.len() == CANDIDATES {
-        Some(count_matches(conn, &expr, ns_key.as_deref())?).filter(|n| *n > CANDIDATES)
+    let mut candidates = candidates_with_limit(conn, &expr, ns_key.as_deref(), cfg.candidates)?;
+    let mut candidate_keys: Vec<String> = candidates.iter().map(|c| c.key.clone()).collect();
+    let matches = if candidates.len() == cfg.candidates {
+        Some(count_matches(conn, &expr, ns_key.as_deref())?).filter(|n| *n > cfg.candidates)
     } else {
         None
     };
-    rank_by_score(conn, &mut candidates, ns_key.as_deref())?;
+    rank_by_score(conn, &mut candidates, ns_key.as_deref(), cfg)?;
 
     // Some of the words (doc 07 §4.2, doc 05 §3.7): fewer notes than a page match every word, and the query has
     // more than one part (`any_expr` is `None` for one), so the notes that match any word and are not hits yet fill the
     // page. They are ranked the same way among themselves and stand after every note with all the words.
     let all_count = candidates.len();
-    if all_count < page_size
+    if all_count < cfg.page_size
         && let Some(any) = &any_expr
     {
         let have: HashSet<String> = candidates.iter().map(|c| c.key.clone()).collect();
-        let mut fill = self::candidates(conn, any, ns_key.as_deref())?;
+        let mut fill = candidates_with_limit(conn, any, ns_key.as_deref(), cfg.candidates)?;
         fill.retain(|c| !have.contains(&c.key));
-        rank_by_score(conn, &mut fill, ns_key.as_deref())?;
-        fill.truncate(page_size - all_count);
+        candidate_keys.extend(fill.iter().map(|c| c.key.clone()));
+        rank_by_score(conn, &mut fill, ns_key.as_deref(), cfg)?;
+        fill.truncate(cfg.page_size - all_count);
         candidates.extend(fill);
     }
     // The fill only completes page 1: `total` is at most one page whenever there is a fill, so there is never a "more"
     // line or a page 2.
     let fill_start = (page == 1 && candidates.len() > all_count).then_some(all_count);
+    let ranked_keys: Vec<String> = candidates.iter().map(|c| c.key.clone()).collect();
 
     let total = candidates.len();
-    let start = ((page - 1) * page_size).min(total);
-    let end = (start + page_size).min(total);
+    let start = ((page - 1) * cfg.page_size).min(total);
+    let end = (start + cfg.page_size).min(total);
     let mut hits = Vec::with_capacity(end - start);
     let keys: Vec<&str> = candidates[start..end].iter().map(|c| c.key.as_str()).collect();
     let mut lines = page_observation_lines(conn, &expr, any_expr.as_deref(), &keys)?;
@@ -153,23 +239,33 @@ pub fn search_with_page_size(
             observations,
         });
     }
-    Ok(SearchPage {
+    let search_page = SearchPage {
         hits,
         page,
         first_number: start + 1,
         more: total - end,
         total,
-        page_size,
+        page_size: cfg.page_size,
         matches,
         query: query.replace('"', "").trim().to_string(),
         fill_start,
+    };
+    Ok(SearchTrace {
+        page: search_page,
+        candidate_keys,
+        ranked_keys,
     })
 }
 
 /// The `ns` boost, then the order of a page: best score first, ties by key.
-fn rank_by_score(conn: &Connection, candidates: &mut [Candidate], ns_key: Option<&str>) -> Result<()> {
+fn rank_by_score(
+    conn: &Connection,
+    candidates: &mut [Candidate],
+    ns_key: Option<&str>,
+    cfg: &RankingConfig,
+) -> Result<()> {
     if let Some(ns_key) = ns_key {
-        boost(conn, candidates, ns_key)?;
+        boost(conn, candidates, ns_key, cfg)?;
     }
     candidates.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.key.cmp(&b.key)));
     Ok(())
@@ -239,7 +335,12 @@ fn count_matches(conn: &Connection, expr: &str, ns_key: Option<&str>) -> Result<
 /// Doc 05 §3.7. The result is the query in the doc, written in two steps for speed: the `MATERIALIZED` step with its
 /// own `ORDER BY rank` lets FTS5 sort the matches before the join. As one join, SQLite looks up the note row of every
 /// match first; on 10,000 notes and a word in all of them that took about 35 ms against 7 ms.
+#[allow(dead_code)]
 fn candidates(conn: &Connection, expr: &str, ns_key: Option<&str>) -> Result<Vec<Candidate>> {
+    candidates_with_limit(conn, expr, ns_key, CANDIDATES)
+}
+
+fn candidates_with_limit(conn: &Connection, expr: &str, ns_key: Option<&str>, limit: usize) -> Result<Vec<Candidate>> {
     let mut stmt = conn.prepare_cached(
         "WITH matches AS MATERIALIZED ( \
              SELECT rowid AS pk, bm25(notes_fts) AS rank FROM notes_fts WHERE notes_fts MATCH ?1 \
@@ -252,7 +353,7 @@ fn candidates(conn: &Connection, expr: &str, ns_key: Option<&str>) -> Result<Vec
          ORDER BY m.rank, n.key \
          LIMIT ?3",
     )?;
-    let rows = stmt.query_map(params![expr, ns_key, CANDIDATES as i64], |r| {
+    let rows = stmt.query_map(params![expr, ns_key, limit as i64], |r| {
         let rank: f64 = r.get(7)?;
         Ok(Candidate {
             key: r.get(0)?,
@@ -270,23 +371,64 @@ fn candidates(conn: &Connection, expr: &str, ns_key: Option<&str>) -> Result<Vec
 }
 
 /// The `ns` boost (doc 07 §4.1): notes in `ns`, and notes that a note in `ns` links to, score higher.
-fn boost(conn: &Connection, candidates: &mut [Candidate], ns_key: &str) -> Result<()> {
-    let mut linked_stmt = conn.prepare_cached(
-        "SELECT EXISTS ( \
-             SELECT 1 FROM edges e JOIN notes s ON s.key = e.source_key \
-             WHERE e.target_key = ?1 AND s.namespace = ?2)",
-    )?;
-    let mut linked_keys = HashSet::new();
-    for c in candidates.iter().filter(|c| c.namespace != ns_key) {
-        if linked_stmt.query_row(params![c.key, ns_key], |r| r.get::<_, bool>(0))? {
-            linked_keys.insert(c.key.clone());
+fn boost(conn: &Connection, candidates: &mut [Candidate], ns_key: &str, cfg: &RankingConfig) -> Result<()> {
+    if (cfg.rel_boost - cfg.inline_boost).abs() < f64::EPSILON && cfg.hub_dampening == HubDampening::None {
+        let mut linked_stmt = conn.prepare_cached(
+            "SELECT EXISTS ( \
+                 SELECT 1 FROM edges e JOIN notes s ON s.key = e.source_key \
+                 WHERE e.target_key = ?1 AND s.namespace = ?2)",
+        )?;
+        let mut linked_keys = HashSet::new();
+        for c in candidates.iter().filter(|c| c.namespace != ns_key) {
+            if linked_stmt.query_row(params![c.key, ns_key], |r| r.get::<_, bool>(0))? {
+                linked_keys.insert(c.key.clone());
+            }
         }
+        for c in candidates.iter_mut() {
+            if c.namespace == ns_key {
+                c.score = -c.rank * (1.0 + cfg.ns_boost);
+            } else if linked_keys.contains(&c.key) {
+                c.score = -c.rank * (1.0 + cfg.rel_boost);
+            }
+        }
+        return Ok(());
     }
+
+    let mut edge_stmt = conn.prepare_cached(
+        "SELECT e.is_inline, s.key \
+         FROM edges e JOIN notes s ON s.key = e.source_key \
+         WHERE e.target_key = ?1 AND s.namespace = ?2",
+    )?;
+    let mut degree_stmt = conn.prepare_cached("SELECT COUNT(*) FROM edges WHERE source_key = ?1")?;
+
     for c in candidates.iter_mut() {
         if c.namespace == ns_key {
-            c.score = -c.rank * (1.0 + NS_BOOST);
-        } else if linked_keys.contains(&c.key) {
-            c.score = -c.rank * (1.0 + LINKED_BOOST);
+            c.score = -c.rank * (1.0 + cfg.ns_boost);
+        } else {
+            let mut total_boost = 0.0;
+            let rows = edge_stmt.query_map(params![c.key, ns_key], |r| {
+                Ok((r.get::<_, i64>(0)? == 1, r.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (is_inline, source_key) = row?;
+                let base_weight = if is_inline { cfg.inline_boost } else { cfg.rel_boost };
+                let dampening = match cfg.hub_dampening {
+                    HubDampening::None => 1.0,
+                    HubDampening::Log => {
+                        let out_degree: i64 = degree_stmt.query_row(params![source_key], |r| r.get(0))?;
+                        1.0 + (1.0 + out_degree as f64).ln()
+                    }
+                    HubDampening::Sqrt => {
+                        let out_degree: i64 = degree_stmt.query_row(params![source_key], |r| r.get(0))?;
+                        (out_degree as f64).sqrt().max(1.0)
+                    }
+                };
+                total_boost += base_weight / dampening;
+            }
+            if total_boost > 0.0 {
+                let clamped_boost = total_boost.min(cfg.max_linked_boost);
+                c.score = -c.rank * (1.0 + clamped_boost);
+            }
         }
     }
     Ok(())
