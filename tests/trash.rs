@@ -195,24 +195,31 @@ fn a_junction_in_place_of_the_trash_directory_is_not_followed() {
     assert!(s.root.join("design/Keep.md").is_file());
 }
 
-/// `New-Item -ItemType Junction` creates a directory junction without the symlink privilege.
-/// `cmd /C mklink` re-parses quotes and treats a path ending near `\trash` as a switch, so this does not use it.
+/// `New-Item -ItemType Junction` creates a directory junction without the symlink privilege on Windows.
+/// On Unix, standard directory symlinks are used instead.
 fn junction(link: &Path, target: &Path) -> std::io::Result<()> {
-    let script = format!(
-        "New-Item -ItemType Junction -Path '{}' -Value '{}' | Out-Null",
-        link.display().to_string().replace('\'', "''"),
-        target.display().to_string().replace('\'', "''"),
-    );
-    let out = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(std::io::Error::other(format!(
-            "New-Item Junction failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        )))
+    #[cfg(windows)]
+    {
+        let script = format!(
+            "New-Item -ItemType Junction -Path '{}' -Value '{}' | Out-Null",
+            link.display().to_string().replace('\'', "''"),
+            target.display().to_string().replace('\'', "''"),
+        );
+        let out = Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!(
+                "New-Item Junction failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            )))
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        std::os::unix::fs::symlink(target, link)
     }
 }
 
