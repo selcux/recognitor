@@ -243,6 +243,36 @@ The rejection never repeats the agent's own request: the agent already has it in
 | `add_relation` with a line that is not a typed relation | `That is not a typed relation line, so nothing was written. Give one line without its leading "- ", as predicate [[Target]], for example: part_of [[Security]].` |
 | An edit to a note that is not valid UTF-8 | `<id> is not valid UTF-8, so nothing was written.` |
 
+### 5.4 Lint Lines in Write Results
+
+A write that leaves a problem in the note says so right away, while the agent can still fix it. `lint` (§12.2) reports the same problems, but only when the user runs it, after the agent has moved on.
+
+```
+design/Caching  checksum: 3f9a2c41b7e0
+lint: 2 warnings; the note is saved
+- schema "concept": no [limit] observation
+- line 8: summary paragraph is 366 characters; the limit is 300
+```
+
+| Write | Findings shown |
+| :--- | :--- |
+| `write_note`, create | Every finding on the new note |
+| `write_note`, overwrite; `edit_note` | Only new findings |
+| `move_note` | Only new findings, such as a link by name that now reaches another namespace without `ns::` |
+| `relink`, `delete_note` | None: `relink` writes links it already resolved, and a delete leaves no note |
+
+- **New:** the note had no finding with the same message before the write; line numbers are ignored. A message with a number in it, such as a summary's length, counts as new when the number changes, because the write touched that part. Findings with the same message count as one: if the note had it before, every copy after the write is old.
+- **Before and after:** the note is checked twice inside the write lock (§5.1), and only the difference is shown.
+  - Overwrite and `edit_note`: before is the text read from disk at step 2, the same text the guard checks, against the index as it stands before the write. After is the new text, once the note's index rows are updated.
+  - `move_note`: before is the text at the old path against the old index; after is the same text at the new path. The path decides the namespace, the base of relative links and the entry point's spelling, so a move can add findings without changing a byte.
+  - Check 6 reads the other note's `status` from its stored copy, so an edit made to it outside Recognitor counts from the next sweep.
+- **Why only new:** an agent acts on what a tool tells it. Old findings would push it to edit parts of a note, or notes the user wrote by hand, that nobody asked it to touch. `lint` lists them for the user.
+- **Checks:** those about one note: 1 to 6, 8 (the entry point's spelling, a Markdown link's case), a link to another namespace without `ns::`, and the type schemas, which skip archive notes as in [02-open-questions-and-tradeoffs.md §8](02-open-questions-and-tradeoffs.md#8-schema-validation-strategy-structural-linting--vault-wide-type-schemas-resolved). Check 6 reads this note's own `status` and `supersedes` lines against the other note in the index.
+- **Not checked:** names (check 7), because a write refuses them (§6); a namespace without `index.md` and the bootstrap hint, because they are about the vault; and a `schemas.toml` that cannot be used, because it is about the file. With such a file, the schema checks are skipped and `lint` reports the file.
+- **Shape:** `lint: <n> warning(s); the note is saved`, then one line per finding: `- line <n>: <message>`, or `- <message>` when the finding has no line. Findings with no line come first, then by line. The messages are those of §12.2, without the note id. "The note is saved" keeps the agent from reading the block as a refusal.
+- **Place:** after the result, before the bootstrap notice, which stays last (§1.1). No block when nothing new was found, so a clean write costs no tokens, and no tool description changes.
+- **No write, no block:** `Already there, nothing was written.` (§9) and every refusal (§5.3) carry no lint block.
+
 ---
 
 ## 6. Note Identity and Moves
@@ -502,7 +532,7 @@ Every edit case maps to one op:
 - **Arguments:** as in §2.1. `section` names a heading as `read_note`'s does (§7.3): matching, several matches and no match work the same.
 - **Observation and relation lines:** `text` is the line without its leading `- `, which the tool adds: `[fact] Tokens expire after 15 minutes.`, `part_of [[Security]]`. A line that is not an observation ([03-markdown-format-and-edge-syntax.md §2, "Observation Syntax"](03-markdown-format-and-edge-syntax.md#observation-syntax)) or a typed relation (doc 03 §3, Tier 1) is refused: it would sit in the note as a plain list item and never be indexed.
 - **Where new text goes:** `append` without `section` inserts before `## Observations`; without it, before `## Relations`; with neither, at the end of the note. A `## Observations` that `add_observation` creates goes before `## Relations`, or at the end; a `## Relations` that `add_relation` creates goes at the end.
-- **Result:** `<id>  checksum: <12 hex>`, as `write_note` (§11), plus the bootstrap notice (§1.1).
+- **Result:** `<id>  checksum: <12 hex>`, as `write_note` (§11), plus the lint block (§5.4) and the bootstrap notice (§1.1).
 - **Already there:** `add_observation` or `add_relation` with a line the section already has writes nothing and returns a normal result: `Already there, nothing was written.`, a line break, then the result line. The lines are compared after trimming, in the section's own text, subsections excluded. No bootstrap notice, because nothing was written.
 - **Archive:** any op but `append` on an archive note is refused: `Archive notes are append only: use append to add to one.`
 - **Argument messages:** `edit_note needs a note`, `edit_note needs an op`, `edit_note needs text`, `edit_note needs find`, `edit_note needs section`, `edit_note needs expected_checksum`; an unknown op gets `op needs one of append, add_observation, add_relation, find_replace, replace_section`. An argument the op does not take is `unexpected argument: <name>` (§2.1), so `section` with `add_observation` cannot put the line somewhere unintended. An empty string counts as not given, because models fill optional arguments with `""`.
@@ -552,7 +582,7 @@ Both are built from the rules above.
 | **Input** | `path` from the vault root (`.md` optional), `content` (the whole file, frontmatter included), optional `expected_checksum` | `note`, `new_path`, `expected_checksum` |
 | **Without checksum** | Create only; rejected if the note exists (§5.2) | Not allowed |
 | **Refused when** | The key already exists (§6), the path has no top-level folder, the path has a non-ASCII character, or the path is not portable (§6). An overwrite is also refused when the note on disk is over the read limit (§7.2) | The target's key already exists, unless it is the note's own key: a case-only rename is allowed and breaks no links (§6). Also when `new_path` has no top-level folder or a non-ASCII character, or is not portable (§6), and when the note is in the archive (§1.1) |
-| **Output** | `<id>  checksum: <12 hex>` | The new id, and every link the move broke, with the `relink` call for links into the note; links inside it are fixed with `edit_note` (§6.1) |
+| **Output** | `<id>  checksum: <12 hex>`, then the lint block (§5.4) | The new id, and every link the move broke, with the `relink` call for links into the note; links inside it are fixed with `edit_note` (§6.1) |
 | **Folders** | Created as needed; existing folders keep their spelling (§6) | Created as needed; existing folders keep their spelling (§6) |
 
 - **Stores:** the bootstrap notice and the archive limits follow §1.1.
@@ -562,7 +592,7 @@ Both are built from the rules above.
 - **No title in the result:** the output shows the id alone, unlike §4.2, because the agent just wrote the title.
 - **Long notes:** `write_note` never overwrites a note over the read limit (§7.2). The agent has seen only part of it, and a whole-note write would delete the rest. `edit_note` changes it a section at a time. Creates, `move_note` and `delete_note` are unaffected. Order of checks for an overwrite: not found (§6.3), archive (§1.1), read limit, checksum.
 
-**`move_note` output:** the move line, the broken links, the `relink` call, and the bootstrap notice.
+**`move_note` output:** the move line, the broken links, the `relink` call, the lint block (§5.4), and the bootstrap notice.
 
 ```
 moved: ideas/Caching -> design/b/Caching
@@ -630,6 +660,7 @@ relinked: 2 links in 1 note
 - **Two lock periods:** `move_note` commits and releases the write lock (§5.1) before the prompt; `relink` takes its own lock after the answer. The lock is never held while a person thinks. A move whose prompt is abandoned stays done.
 - **The `relink` line** of §11 becomes the CLI command that does the same: ids in double quotes, and `--vault "<path>"` at the end only when `--vault` was given. It is printed before the prompt, so Ctrl-C still leaves the way to finish on screen.
 - **`edit by hand:`** follows when the moved note's own links broke, because the CLI has no `edit` command (§12). It shows even when no linking note is listed.
+- **Lint block** (§5.4): after `edit by hand:`, which stays next to the `relink` command it explains, and before the bootstrap notice.
 - **Streams:** the move block and the `relink` block (§6.1) go to stdout; the move block is flushed before the prompt. The prompt, its list and its messages go to stderr, so stdout holds only Markdown text.
 - **The prompt** shows only when the `relink` line names at least one note.
 
@@ -664,6 +695,7 @@ lint: 0 errors, 3 warnings, 0 hints; 106 notes checked
 - **Severity:** errors are check 7 (a non-ASCII name, case twins) and a `schemas.toml` that cannot be used. Everything else is a warning, a file the sweep could not read included: a lint that could not read a file has not passed. `--strict` prints every warning as `error:`. The bootstrap hint stays a hint.
 - **Sweep first:** lint runs a sync, then checks the stored copy of every note with the sweep's own parser and link resolver. A sync with no changes reads no files and the index keeps no warnings, so this is how lint sees every note's warnings. Type schemas read the note's text, not its stored rows, because bootstrap and archive notes store no observations or edges.
 - **Streams:** the report goes to stdout, even with errors, and stderr stays empty (§2.1, "Errors").
+- **Write tools** show the one-note findings a write introduced, with the same messages (§5.4).
 
 | Exit | When |
 | :--- | :--- |
