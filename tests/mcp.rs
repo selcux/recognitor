@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+// A test input: this path must be in the `.code-paths` list of .gitlab-ci.yml. tests/ci_paths.rs enforces it.
 const DOC_07: &str = include_str!("../docs/07-interface-contracts.md");
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);

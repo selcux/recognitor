@@ -18,6 +18,26 @@ workflow:
 default:
   interruptible: true
 
+# Paths that can change what the Rust jobs do. An allowlist on purpose: `rules:changes` has no negation, and a
+# `when: never` rule on docs would skip commits that mix docs and code. A commit that touches none of these runs
+# only secret_detection. Any `include_str!`/`include_bytes!`/`include!` of a file outside these paths must be added
+# here; tests/ci_paths.rs scans the sources and fails the build if one is missing. It understands only `prefix/**/*`
+# and exact entries, so keep the list in those two forms (or extend the matcher in that test).
+.code-paths: &code-paths
+  - src/**/*
+  - tests/**/*             # includes tests/fixtures/vault/**/*.md, which are test inputs
+  - benches/**/*
+  - examples/**/*
+  - build.rs
+  - Cargo.toml
+  - Cargo.lock
+  - rust-toolchain.toml
+  - rustfmt.toml
+  - clippy.toml
+  - .gitattributes         # eol=lf changes how the tests see line endings
+  - .gitlab-ci.yml         # a CI edit must validate itself
+  - docs/07-interface-contracts.md  # tests/mcp.rs include_str!s it
+
 .rust-linux:
   image: rust:1.85-bookworm
   before_script:
@@ -35,6 +55,12 @@ default:
 fmt-clippy:
   extends: .rust-linux
   stage: check
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: *code-paths
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes: *code-paths
   script:
     - cargo fmt --check
     - cargo clippy --all-targets -- -D warnings
@@ -56,6 +82,12 @@ tag-version-check:
 test-linux:
   extends: .rust-linux
   stage: test
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: *code-paths
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes: *code-paths
   script:
     - cargo test --locked
 
@@ -63,8 +95,9 @@ test-windows:
   extends: .rust-windows
   stage: test
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes: *code-paths
   script:
     - cargo test --locked
 
