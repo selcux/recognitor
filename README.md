@@ -291,7 +291,7 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
    The project's `AGENTS.md`, with that project's namespace:
 
    ```markdown
-   Session start: call `load_namespace('recognitor')`.
+   Session start: call `load_namespace('<namespace name>')`.
    ```
 
 On Windows, a running server keeps the binary open. Disconnect the server in your client first, then reinstall.
