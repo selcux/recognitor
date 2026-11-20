@@ -279,36 +279,20 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 
    To serve a vault other than the configured one, add `"--vault", "/path/to/vault"` to `args`, or set `RECOGNITOR_VAULT` in the entry's environment.
 
-4. **Load the bootstrap and the project's entry note at session start.** The bootstrap is the same in every project,
-   so it goes in your global settings. The entry note belongs to one project, so it goes in that project's settings.
+4. **Load the bootstrap and the project's entry note at session start.** Add one line to each instruction file
+   (`AGENTS.md`, or your client's equivalent).
 
-   | | Bootstrap, every project | Entry note, one project |
-   | :--- | :--- | :--- |
-   | **Hook**, if your client has session-start hooks | A global hook runs `recognitor bootstrap` | No CLI command for it yet: use the instruction |
-   | **Instruction**, any client | Global `AGENTS.md`: ``Session start: call `load_bootstrap()`.`` | Project `AGENTS.md`: ``Session start: call `load_namespace('recognitor')`.`` |
+   Global `AGENTS.md`, read in every project:
 
-   - **A hook runs the CLI, never an MCP tool.** Session-start hooks run before the client connects its MCP servers, so
-     a hook that calls a tool fails (Claude Code: "mcp_tool hooks are not available for the 'SessionStart' hook
-     event"). The hook runs `recognitor bootstrap`, and the client adds its output to the context. The assistant does
-     nothing, so it cannot forget.
-   - **Example for Claude Code,** in `~/.claude/settings.json`. The matcher also reloads after `/clear` and
-     compaction. The command finds the vault as in step 2, or add `--vault /path/to/vault`.
+   ```markdown
+   Session start: call `load_bootstrap()`.
+   ```
 
-     ```json
-     {
-       "hooks": {
-         "SessionStart": [
-           {
-             "matcher": "startup|clear|compact",
-             "hooks": [{ "type": "command", "command": "recognitor bootstrap", "timeout": 30 }]
-           }
-         ]
-       }
-     }
-     ```
+   The project's `AGENTS.md`, with that project's namespace:
 
-   - **An instruction** works with any client, but only if the assistant follows it.
-   - **Load each one once.** A hook and an instruction for the same thing load it twice.
+   ```markdown
+   Session start: call `load_namespace('recognitor')`.
+   ```
 
 On Windows, a running server keeps the binary open. Disconnect the server in your client first, then reinstall.
 
