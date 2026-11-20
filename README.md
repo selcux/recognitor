@@ -281,31 +281,18 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 
 4. **Load the bootstrap and the project's entry note at session start.** The bootstrap is the same in every project,
    so it goes in your global settings. The entry note belongs to one project, so it goes in that project's settings.
-   Pick one option:
 
-   **a. Hook**, if your client's session-start hooks can call MCP tools:
+   | | Bootstrap, every project | Entry note, one project |
+   | :--- | :--- | :--- |
+   | **Hook**, if your client has session-start hooks | A global hook runs `recognitor bootstrap` | No CLI command for it yet: use the instruction |
+   | **Instruction**, any client | Global `AGENTS.md`: ``Session start: call `load_bootstrap()`.`` | Project `AGENTS.md`: ``Session start: call `load_namespace('recognitor')`.`` |
 
-   - Global hook: calls `load_bootstrap`.
-   - Project hook: calls `load_namespace` with `ns` set to the project's namespace.
-   - Reliable: the assistant does nothing.
-   - Example for Claude Code. The matcher also reloads after `/clear` and compaction.
-
-     Global, in `~/.claude/settings.json`:
-
-     ```json
-     {
-       "hooks": {
-         "SessionStart": [
-           {
-             "matcher": "startup|clear|compact",
-             "hooks": [{ "type": "mcp_tool", "server": "recognitor", "tool": "load_bootstrap" }]
-           }
-         ]
-       }
-     }
-     ```
-
-     Project, in `.claude/settings.json`:
+   - **A hook runs the CLI, never an MCP tool.** Session-start hooks run before the client connects its MCP servers, so
+     a hook that calls a tool fails (Claude Code: "mcp_tool hooks are not available for the 'SessionStart' hook
+     event"). The hook runs `recognitor bootstrap`, and the client adds its output to the context. The assistant does
+     nothing, so it cannot forget.
+   - **Example for Claude Code,** in `~/.claude/settings.json`. The matcher also reloads after `/clear` and
+     compaction. The command finds the vault as in step 2, or add `--vault /path/to/vault`.
 
      ```json
      {
@@ -313,35 +300,15 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
          "SessionStart": [
            {
              "matcher": "startup|clear|compact",
-             "hooks": [
-               { "type": "mcp_tool", "server": "recognitor", "tool": "load_namespace", "input": { "ns": "recognitor" } }
-             ]
+             "hooks": [{ "type": "command", "command": "recognitor bootstrap", "timeout": 30 }]
            }
          ]
        }
      }
      ```
 
-   **b. Instruction**, for any other client:
-
-   - Global instruction file: one line for the bootstrap.
-   - Project instruction file: one line for the entry note.
-   - Works only if the assistant follows them.
-   - Example, with `AGENTS.md` (or your client's equivalent).
-
-     Global `AGENTS.md`:
-
-     ```markdown
-     Session start: call `load_bootstrap()`.
-     ```
-
-     Project `AGENTS.md`:
-
-     ```markdown
-     Session start: call `load_namespace('recognitor')`.
-     ```
-
-   Use one option only, or everything loads twice.
+   - **An instruction** works with any client, but only if the assistant follows it.
+   - **Load each one once.** A hook and an instruction for the same thing load it twice.
 
 On Windows, a running server keeps the binary open. Disconnect the server in your client first, then reinstall.
 
