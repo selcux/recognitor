@@ -279,12 +279,69 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 
    To serve a vault other than the configured one, add `"--vault", "/path/to/vault"` to `args`, or set `RECOGNITOR_VAULT` in the entry's environment.
 
-4. **Load the bootstrap at session start.** Pick one:
+4. **Load the bootstrap and the project's entry note at session start.** The bootstrap is the same in every project,
+   so it goes in your global settings. The entry note belongs to one project, so it goes in that project's settings.
+   Pick one option:
 
-   | Way | How | Trade-off |
-   | :--- | :--- | :--- |
-   | Session-start hook | The client runs `recognitor bootstrap` and adds its output to the context | Reliable: it does not depend on the model following an instruction. Needs a client with hooks |
-   | Instruction | The assistant's instruction file (`AGENTS.md` or your client's equivalent) says: "Session start: call `load_bootstrap()`, then `load_namespace('<project>')`." | Works with any client. The model has to follow it |
+   **a. Hook**, if your client's session-start hooks can call MCP tools:
+
+   - Global hook: calls `load_bootstrap`.
+   - Project hook: calls `load_namespace` with `ns` set to the project's namespace.
+   - Reliable: the assistant does nothing.
+   - Example for Claude Code. The matcher also reloads after `/clear` and compaction.
+
+     Global, in `~/.claude/settings.json`:
+
+     ```json
+     {
+       "hooks": {
+         "SessionStart": [
+           {
+             "matcher": "startup|clear|compact",
+             "hooks": [{ "type": "mcp_tool", "server": "recognitor", "tool": "load_bootstrap" }]
+           }
+         ]
+       }
+     }
+     ```
+
+     Project, in `.claude/settings.json`:
+
+     ```json
+     {
+       "hooks": {
+         "SessionStart": [
+           {
+             "matcher": "startup|clear|compact",
+             "hooks": [
+               { "type": "mcp_tool", "server": "recognitor", "tool": "load_namespace", "input": { "ns": "recognitor" } }
+             ]
+           }
+         ]
+       }
+     }
+     ```
+
+   **b. Instruction**, for any other client:
+
+   - Global instruction file: one line for the bootstrap.
+   - Project instruction file: one line for the entry note.
+   - Works only if the assistant follows them.
+   - Example, with `AGENTS.md` (or your client's equivalent).
+
+     Global `AGENTS.md`:
+
+     ```markdown
+     Session start: call `load_bootstrap()`.
+     ```
+
+     Project `AGENTS.md`:
+
+     ```markdown
+     Session start: call `load_namespace('recognitor')`.
+     ```
+
+   Use one option only, or everything loads twice.
 
 On Windows, a running server keeps the binary open. Disconnect the server in your client first, then reinstall.
 
