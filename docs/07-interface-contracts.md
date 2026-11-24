@@ -41,7 +41,7 @@ A note's store comes from its namespace: `bootstrap`, `archive`, or any other na
 | Surface | Tools / commands |
 | :--- | :--- |
 | **MCP** | `load_bootstrap`, `load_namespace`, `search`, `context`, `read_note`, `write_note`, `edit_note`, `move_note`, `relink`, `delete_note` |
-| **CLI** | `bootstrap [--list]`, `search`, `context`, `read`, `move`, `relink`, `ghosts [<link>]`, `trash empty`, `sync`, `rebuild`, `lint [--strict]`, `config get/set` |
+| **CLI** | `bootstrap [--list]`, `search`, `context`, `read`, `move`, `relink`, `ghosts [<link>]`, `trash empty`, `sync`, `rebuild`, `lint [--strict]`, `doctor`, `config get/set` |
 
 - **CLI-only:** `ghosts` (backlog gardening is a human job, not an agent job).
 - **Rejected: a `query` command for raw SQL.** The schema is a disposable projection that changes without migrations; exposing raw SQL would turn it into an API people depend on.
@@ -91,7 +91,7 @@ A line ending in "page N" means more results exist.
 - **Why a tool result:** each error message names the fix (call `load_bootstrap`, the list of sections), so it comes back as text the model reads and acts on. The flag tells the client the call failed, so a refusal never passes for a success.
 - **No prefix over MCP:** the text is the CLI's message without the `error:` prefix; the flag already says it.
 - **Argument messages:** they match the CLI's texts, without its dashes. A missing argument reads `<tool> needs <what>`: `search needs a query`, `read_note needs a note`, `load_namespace needs ns`. An argument of the wrong type reads `<argument> needs text`, or `page needs a number from 1`. New tools follow the same two patterns.
-- **One exception, `lint`:** its findings are a normal result on stdout even when they include errors, and an error finding sets exit 1 (§12.2). The findings are what the user asked for; the exit code is the verdict a hook or CI reads.
+- **Two exceptions, `lint` and `doctor`:** their findings are a normal result on stdout even when something is wrong, and that verdict sets exit 1 (§12.2, §12.5). The findings are what the user asked for; the exit code is what a hook or CI reads.
 - **Unknown arguments are errors:** `unexpected argument: <name>`, as the CLI says. Ignoring one would turn a typo such as `pages: 2` into page 1, a wrong result that looks right. The schemas do not mark extra arguments as forbidden: that would cost tokens in every session, and the error already teaches the agent.
 
 ---
@@ -630,13 +630,13 @@ The CLI has no `write`, `edit` or `delete` commands. A human edits notes in an e
 | :--- | :--- |
 | `bootstrap [--list]`, `search`, `context`, `read` | Inspect what agents see; the session-start hook runs `bootstrap` ([04-information-stores-and-lifecycle.md §5.1](04-information-stores-and-lifecycle.md)) |
 | `move`, `relink` | A move needs the link check and `relink` (§6.1); a move made outside Recognitor needs `relink` alone (§6.2) |
-| `ghosts [<link>]`, `lint [--strict]`, `trash empty` | Maintenance |
+| `ghosts [<link>]`, `lint [--strict]`, `doctor`, `trash empty` | Maintenance |
 | `sync`, `rebuild`, `config get/set` | Engine control |
 
 - **Same arguments as MCP:** a CLI command takes its MCP tool's arguments by the same names. The first required argument is positional, and every optional one is an option with its name: `search <query> --ns <name> --page <n>`, `context <note> --page <n>`, `read <note> --section <heading> --query <text>`. A tool with several required arguments takes them all as positionals, in order, a list last: `relink <old> <new> <note>...`. The one exception is `move`, which takes no `expected_checksum` (§12.1).
 - **An option on the wrong command is a bad argument** (§2.1), never ignored: ignoring `--page 2` on `read` would return a wrong result that looks right. The message names the commands that take it: `--ns belongs to search`, `--page belongs to search and context`, `--section and --query belong to read`, `--relink belongs to move`, `--list belongs to bootstrap`, `--strict belongs to lint`, `--report belongs to sync and rebuild`.
 - **Which vault:** the `--vault <path>` flag, else the `RECOGNITOR_VAULT` environment variable, else `vault.path` in the config file. With none of them set, the command fails with an error that names all three. Sessions, hooks and the MCP server start in code repos, not in the vault, so the vault is never guessed from the current folder. The MCP server finds its vault the same way.
-- **Config file:** `config.toml` in the per-user local config folder, `ProjectDirs::config_local_dir()` from the `directories` crate (Windows: `%LOCALAPPDATA%\recognitor\config\config.toml`). Local, not roaming, because a vault path belongs to one machine. The `RECOGNITOR_CONFIG` environment variable points at another config file, for tests and portable setups. `config get/set` reads and writes it and keeps comments and unknown keys; keys follow the `section.name` style ([05-database-schema-specification.md §5](05-database-schema-specification.md#5-database-file-location)).
+- **Config file:** `config.toml` in the per-user local config folder, `ProjectDirs::config_local_dir()` from the `directories` crate (Windows: `%LOCALAPPDATA%\recognitor\config\config.toml`). Local, not roaming, because a vault path belongs to one machine. The `RECOGNITOR_CONFIG` environment variable points at another config file, for tests and portable setups. `config get/set` reads and writes it and keeps comments and unknown keys; keys follow the `section.name` style ([05-database-schema-specification.md §5](05-database-schema-specification.md#5-database-file-location)). Harness entries are `[harness.<name>]` tables in that same file. They are not `config get` or `config set` keys: those commands leave a harness table as it is, and `search` does not read it. A TOML syntax error still fails every command that parses the file. What the tables hold, and how `doctor` reads them, is §12.5.
 
 `load_bootstrap` behaves as specified in [04-information-stores-and-lifecycle.md §2.2](04-information-stores-and-lifecycle.md#22-loading-load_bootstrap), failure output included; it keeps no state, so it needs no change for the stateless server.
 
@@ -783,6 +783,79 @@ A delete the operating system refuses stops the command. Files already removed s
 A symlink or junction in place of the trash directory is not followed. Nothing is deleted, and the error is `<path>: refusing to follow a link out of .recognitor/trash`. A trash path that exists and is not a directory gets `<path>: not a directory`. A link inside the trash is removed; its target outside the trash stays.
 
 - **Usage messages:** `usage: trash empty` when `trash` has no subcommand or one other than `empty`. A word after `empty` is `unexpected argument: <word>`.
+
+### 12.5 `doctor`
+
+Checks the bootstrap block in each installed harness instruction file ([04-information-stores-and-lifecycle.md §5.3](04-information-stores-and-lifecycle.md#53-the-bootstrap-block)). Read-only: it creates nothing and edits nothing. It takes no harness name and no flag of its own. `--vault` applies, as it does for `bootstrap`.
+
+```
+$ recognitor doctor
+claude: C:\Users\me\.claude\CLAUDE.md: up to date
+antigravity: C:\Users\me\.gemini\AGENTS.md: block absent
+recognitor bootstrap write antigravity
+codex: C:\Users\me\.codex\AGENTS.md: misconfigured
+```
+
+- **Line:** `<name>: <path>: <state>`. The state is one of `up to date`, `block absent`, `out of date`, `misconfigured`, `missing` (§5.3 of doc 04). The path is the instruction file, resolved.
+- **Suggestion:** the next line is exactly `recognitor bootstrap write <name>`, and only after `block absent` or `out of date`. `misconfigured` and `missing` get no suggestion: a one-marker file and a missing file stay as they are until someone fixes them by hand. `bootstrap write` and `bootstrap remove` are not commands in this version. The line names the fix.
+- **Order:** the four built-ins, then names the file adds, in file order. Files of one harness follow its `files` list.
+- **Not installed:** a harness whose directory is absent is skipped. Nothing is printed for it, and the directory is not created. When every harness is skipped, stdout and stderr stay empty and the exit code is 0.
+- **Vault:** after the table parses and every present harness directory is a directory, `doctor` compiles the payload the same way `recognitor bootstrap` does, including when every harness was skipped. No vault is a usage error (§2.1). A missing `bootstrap/index.md` is the same error as `bootstrap`.
+- **Streams:** the report goes to stdout, and stderr stays empty. A bad table, a path that exists and is not a directory, or an instruction path that exists and is not a file goes to stderr as `error:`, with nothing on stdout and no partial report.
+- **Order of checks:** the table is read first, then the directories. Either failure exits before the vault is opened, so a bad table does not sweep.
+
+| Exit | When |
+| :--- | :--- |
+| 0 | Every printed file is `up to date`, or every harness was skipped |
+| 1 | Any file is not `up to date`, or the table or a path shape is wrong, or the command failed (§2.1) |
+| 2 | Bad arguments, including no vault (§2.1) |
+
+**Harness tables.** A missing config file is an empty document. The four built-ins of doc 04 §5.3 exist anyway. The file is not rewritten to materialize them.
+
+```toml
+[harness.claude]
+directory = "~/.claude"
+files = ["CLAUDE.md"]
+
+[harness.my-tool]
+directory = "D:/apps/my-tool"
+```
+
+- **Overlay:** the same name, compared case-insensitively, replaces only the fields that are present. `[harness.claude]` with only `directory` keeps `CLAUDE.md`. The report uses the canonical spelling: `Claude` selects `claude`.
+- **A new name** adds a harness, after the four, in file order. Its `directory` is required. The canonical name is the key folded to ASCII lowercase: a letter, then letters, digits, and hyphens.
+- **Two keys that differ only by case** are an error.
+- **`files`:** optional. Omitted or `[]` means one file, `AGENTS.md`. A non-empty array is the whole list. Any field other than `directory` and `files` is an error, so `file` cannot fall through to `AGENTS.md`.
+- **`directory`:** a home-relative path or an absolute path. `~/.claude` and `~\.claude` are the same path. `~` is `directories::BaseDirs::home_dir()` (`%USERPROFILE%` on Windows, `$HOME` on Unix). `~` alone, `~` plus a username, an empty directory, and a path with no `~` and no drive or root (`.claude`, `bin\my_harness`) are errors. Recognitor does not guess from the current folder. An absolute path is used as given. A `~` path with no user profile is an error. An absolute path does not need one. `CODEX_HOME`, `XDG_CONFIG_HOME`, and `OPENCODE_CONFIG_DIR` are not read.
+- **Each `files` entry** is a relative path inside the harness directory. Absolute, empty, or a `..` component is an error. A repeated path in one harness is an error: `/` and `\` are the same path, a `.` component is ignored, and case counts as written.
+- **On disk:** an installed harness has its directory. A named file that is missing is `missing` in the report, and the other files are still listed. A path that exists and is not a directory, or an instruction path that exists and is not a file, is an error and nothing else is printed.
+
+A harness error is `error: <config path>: <message>`. The rows that start with `<path>` or `<home>` are the whole text after `error: `.
+
+| Case | Message |
+| :--- | :--- |
+| `[harness]` is not a table | `[harness] must be a table of harnesses` |
+| Two keys differ only by case | `harness names "<a>" and "<b>" differ only by case` |
+| An entry is not a table | `[harness.<name>] must be a table` |
+| Illegal name | `harness name "<name>" is illegal: use ASCII lowercase letters, digits and hyphens, starting with a letter` |
+| New harness, no directory | `[harness.<name>] needs a directory` |
+| `directory` is not a string | `[harness.<name>].directory must be a string` |
+| `files` is not an array of strings | `[harness.<name>].files must be an array of strings` |
+| One `files` entry is not a string | `[harness.<name>].files[<n>] must be a string` |
+| Unknown field | `[harness.<name>] has unknown field "<field>"; only directory and files are valid` |
+| Empty directory | `[harness.<name>].directory is empty` |
+| `~` alone | `[harness.<name>].directory is "~"; use ~/... or an absolute path` |
+| `~` plus a username, or `~` not followed by `/` or `\` | `[harness.<name>].directory "<value>" is not a home-relative path; use ~/... or an absolute path` |
+| Relative directory | `[harness.<name>].directory "<value>" is relative; use ~/... or an absolute path` |
+| Empty file path | `[harness.<name>].files has an empty path` |
+| Absolute file path | `[harness.<name>].files entry "<path>" is absolute; use a path inside the harness directory` |
+| A `..` component | `[harness.<name>].files entry "<path>" has a .. component` |
+| Repeated file path | `[harness.<name>].files repeats "<path>"` |
+| No user profile | `<home>: no user profile directory found; set harness directories to absolute paths` |
+| Path exists and is not a directory | `<path>: <path> exists and is not a directory` |
+| Instruction path is a directory | `<path>: <path> is a directory; expected an instruction file` |
+| Instruction path is not a file | `<path>: <path> is not a file` |
+
+- **Usage messages:** `unexpected argument: <word>`.
 
 ---
 

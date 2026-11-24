@@ -153,6 +153,47 @@ Harnesses load their own instruction files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md
 
 A rule stored in both places drifts, and the two copies eventually conflict.
 
+### 5.3 The bootstrap block
+
+`recognitor doctor` is the read-only check that each installed harness instruction file holds the current bootstrap payload. The check is that block and nothing else. It writes no file. The report lines and the exit codes are [07-interface-contracts.md §12.5](07-interface-contracts.md#125-doctor).
+
+The block is two lines around the text `recognitor bootstrap` prints. That text is the payload of §2.2, and the budget warning when the estimate is over `bootstrap.max_tokens`.
+
+```markdown
+<!-- recognitor bootstrap sha=<64 hex digits> -->
+...payload...
+<!-- recognitor bootstrap end -->
+```
+
+The sha is the SHA-256 of the bytes between those lines, as 64 lowercase hex digits. `doctor` hashes those bytes and compares them with the current payload. A stamp that disagrees with the bytes, or bytes that disagree with the payload, means the block is out of date.
+
+A marker is a whole line. One trailing carriage return is stripped before the line is recognized. No other whitespace is ignored.
+
+- **Start:** `<!-- recognitor bootstrap sha=` then 64 hex digits then ` -->`. Either hex case matches the line. The stamp matches the bytes when it equals their lowercase SHA-256, ignoring hex case.
+- **End:** `<!-- recognitor bootstrap end -->`.
+- **Bytes between the lines:** the raw file bytes after the newline that ends the start line, and before the end line. Line endings are not normalized, so a block stored with carriage returns does not match the line-feed payload the command prints.
+- **No marker line:** block absent.
+- **One start and one end, and the end line begins after the start:** `up to date` when the stamp and the bytes both match the payload, otherwise `out of date`.
+- **Any other arrangement** (one of the two lines, the end before the start, or more than one of either): `misconfigured`.
+- **The named file is not on disk:** `missing`.
+
+For a missing block or an out-of-date block, `doctor` suggests `recognitor bootstrap write <harness>`. A misconfigured file is reported as misconfigured, with no suggestion. The file stays as it is until someone fixes it by hand. `doctor` still lists the other harnesses. A missing file is reported the same way: listed, no suggestion, and the other files still follow.
+
+A harness whose directory is absent is not installed. `doctor` skips it, does not create the directory, and does not treat the absence as an error.
+
+The binary always starts from these four, in this order. `files` omitted means `AGENTS.md` in that directory.
+
+| Name | Directory | Files | On Windows |
+| :--- | :--- | :--- | :--- |
+| `claude` | `~/.claude` | `CLAUDE.md` | `%USERPROFILE%\.claude\CLAUDE.md` |
+| `antigravity` | `~/.gemini` | `AGENTS.md` | `%USERPROFILE%\.gemini\AGENTS.md` |
+| `codex` | `~/.codex` | `AGENTS.md` | `%USERPROFILE%\.codex\AGENTS.md` |
+| `opencode` | `~/.config/opencode` | `AGENTS.md` | `%USERPROFILE%\.config\opencode\AGENTS.md` |
+
+`~` is the user profile (`directories::BaseDirs::home_dir()`). These are the default directories. `CODEX_HOME`, `XDG_CONFIG_HOME`, and `OPENCODE_CONFIG_DIR` are not read. OpenCode's path is the user profile's `.config\opencode`, not `%APPDATA%\opencode`. Codex also reads `AGENTS.override.md` in that directory when the file exists. The built-in names `AGENTS.md`. The override stays out of `files`, because a missing named file is reported and the override is usually absent.
+
+The config file can replace a directory or a file list, or add a harness. There is no `enabled` field. An installed built-in is always on the list. Skipping happens only when its directory is absent. The overlay rules are [07-interface-contracts.md §12.5](07-interface-contracts.md#125-doctor).
+
 ---
 
 ## 6. Observation Granularity & Open Categories

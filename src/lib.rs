@@ -13,6 +13,7 @@ pub mod config;
 pub mod context;
 pub mod db;
 pub mod delete_note;
+pub mod doctor;
 pub mod edit_note;
 pub mod error;
 pub mod ghosts;

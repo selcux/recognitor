@@ -5,8 +5,8 @@
 
 //! `recognitor` CLI: a thin layer over the library. Commands are defined in doc 07 §12.
 //!
-//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `move`, `relink`, `lint`, `ghosts`,
-//! `trash empty`, `mcp` and `config get/set`. The vault comes from `--vault`, else `RECOGNITOR_VAULT`, else
+//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `move`, `relink`, `lint`, `doctor`,
+//! `ghosts`, `trash empty`, `mcp` and `config get/set`. The vault comes from `--vault`, else `RECOGNITOR_VAULT`, else
 //! `vault.path` in the config file (doc 07 §12, "Which vault").
 //!
 //! `move` is the one command that talks to the user (doc 07 §6.1): it moves the note, prints the broken links, asks which
@@ -33,6 +33,7 @@ const USAGE: &str = "usage: recognitor sync|rebuild [--report] [--vault <path>]
        recognitor move <note> <new_path> [--relink all|none|ask] [--vault <path>]
        recognitor relink <old> <new> <note>... [--vault <path>]
        recognitor lint [--strict] [--vault <path>]
+       recognitor doctor [--vault <path>]
        recognitor ghosts [<link>] [--vault <path>]
        recognitor trash empty [--vault <path>]
        recognitor mcp [--vault <path>]
@@ -50,6 +51,7 @@ commands:
   relink <old> <new> <note>...
                             rewrite the links to a moved note in the notes given; old is its id before the move
   lint                      check the vault against doc 02 §8; exits 1 on an error, with --strict on a warning too
+  doctor                    check the bootstrap block in each installed harness instruction file
   ghosts [<link>]           the links that reach no note, with a hint where a moved note went; <link> lists its linking notes
   trash empty               clear .recognitor/trash
   mcp                       serve the tools over MCP on stdio (one server per client session)
@@ -121,6 +123,7 @@ enum Command {
     Lint {
         strict: bool,
     },
+    Doctor,
     Ghosts {
         link: Option<String>,
     },
@@ -235,6 +238,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
         },
         ("relink", _) => return Err("relink needs old, new and at least one note".to_string()),
         ("lint", []) => Command::Lint { strict },
+        ("doctor", []) => Command::Doctor,
         ("ghosts", []) => Command::Ghosts { link: None },
         ("ghosts", [link]) => Command::Ghosts {
             link: Some(link.clone()),
@@ -249,7 +253,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             Command::Config(ConfigCommand::Set(key.clone(), value.clone()))
         }
         ("config", _) => return Err("usage: config get <key> | config set <key> <value>".to_string()),
-        ("sync" | "rebuild" | "search" | "context" | "read" | "bootstrap" | "lint" | "mcp", [extra, ..]) => {
+        ("sync" | "rebuild" | "search" | "context" | "read" | "bootstrap" | "lint" | "doctor" | "mcp", [extra, ..]) => {
             return Err(format!("unexpected argument: {extra}"));
         }
         (other, _) => return Err(format!("unknown command: {other}")),
@@ -327,8 +331,8 @@ fn run(args: &Args) -> recognitor::Result<String> {
             args.vault.as_deref(),
         )),
         Command::Config(cmd) => run_config(cmd),
-        // `main` runs `lint` itself, because its exit code depends on what it finds.
-        Command::Lint { .. } => Ok(String::new()),
+        // `main` runs `lint` and `doctor` itself, because their exit codes depend on what they find.
+        Command::Lint { .. } | Command::Doctor => Ok(String::new()),
         Command::Mcp => run_mcp(args),
         Command::TrashEmpty => run_trash_empty(args),
     }
@@ -355,6 +359,24 @@ fn open_index(args: &Args) -> recognitor::Result<(Index, PathBuf)> {
 fn run_lint(args: &Args, strict: bool) -> recognitor::Result<(String, ExitCode)> {
     let (mut index, _) = open_index(args)?;
     let report = recognitor::lint::lint(&mut index, strict)?;
+    let code = if report.failed() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    };
+    Ok((report.render(), code))
+}
+
+/// `recognitor doctor`: parse the harness table and stat directories first (so a bad table or a non-directory never
+/// sweeps), then compile the payload and classify each installed file. Exit 1 when any file is not up to date
+/// (provisional; see `doctor` module).
+fn run_doctor(args: &Args) -> recognitor::Result<(String, ExitCode)> {
+    let config_file = config::config_path()?;
+    let harnesses = recognitor::doctor::load_harnesses(&config_file)?;
+    let installed = recognitor::doctor::installed_files(&harnesses)?;
+    let (mut index, _) = open_index(args)?;
+    let max_tokens = config::bootstrap_max_tokens(&config_file)?.unwrap_or(DEFAULT_MAX_TOKENS);
+    let report = recognitor::doctor::doctor(&mut index, &installed, max_tokens)?;
     let code = if report.failed() {
         ExitCode::FAILURE
     } else {
@@ -464,6 +486,7 @@ fn main() -> ExitCode {
     };
     let result = match &args.command {
         Command::Lint { strict } => run_lint(&args, *strict),
+        Command::Doctor => run_doctor(&args),
         _ => run(&args).map(|text| (text, ExitCode::SUCCESS)),
     };
     match result {

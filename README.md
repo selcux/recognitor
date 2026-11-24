@@ -247,6 +247,7 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 | `move` | Move a note and pick the links to fix, in one command | ✅ |
 | `relink` | Fix links after a move made outside Recognitor | ✅ |
 | `lint [--strict]` | Report case twins, missing entry points, type schema misses, and other problems. `--strict` fails on warnings too, for a pre-commit hook or CI | ✅ |
+| `doctor` | Check that each installed harness instruction file holds the current bootstrap payload | ✅ |
 | `mcp` | Serve the tools to one assistant session over stdio | ✅ |
 | `config get/set` | Read and change the config file | ✅ |
 | `ghosts [<link>]` | List links to missing notes, with a hint where a moved note went. With a link: the notes that hold it, and the `relink` command when there is a hint | ✅ |
@@ -306,6 +307,7 @@ recognitor bootstrap --list
 recognitor move ideas/Caching design/b/Caching
 recognitor relink ideas/Caching design/b/Caching ops/Runbook
 recognitor lint --strict
+recognitor doctor
 recognitor ghosts
 ```
 
@@ -317,7 +319,7 @@ recognitor ghosts
 | :--- | :--- |
 | Read tools and the MCP server | ✅ Built and tested |
 | Write tools | ✅ Built and tested |
-| CLI `lint`, `ghosts` | ✅ Built and tested |
+| CLI `lint`, `doctor`, `ghosts` | ✅ Built and tested |
 | CLI `trash empty` | ✅ Built and tested |
 | Search ranking | ✅ Verified at 98% recall@5 with the retrieval benchmark |
 | 100× scale & latency | ✅ Verified: 10k notes, 100k observations, 20k edges (p95: 8.1s rebuild, 32ms sweep, 6ms search) |

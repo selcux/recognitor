@@ -383,5 +383,5 @@ The database never lives inside the vault. Cloud sync tools and git would copy i
 | **macOS** | `~/Library/Caches/recognitor/<vault-id>.db` |
 
 - **`<vault-id>`:** first 16 hex characters of the SHA-256 of the canonical absolute vault root path (symlinks resolved; on Windows, lowercased and without the `\\?\` prefix). Two vaults never share a database, and two users never share a directory.
-- **Override:** the `RECOGNITOR_DB` environment variable or `db.path` in the config file sets an explicit path. Config keys use one style: `section.name` (`db.path`, `read.max_tokens`, `bootstrap.max_tokens`).
+- **Override:** the `RECOGNITOR_DB` environment variable or `db.path` in the config file sets an explicit path. Config keys use one style: `section.name` (`db.path`, `read.max_tokens`, `bootstrap.max_tokens`, and `vault.path`). Harness entries are `[harness.<name>]` tables in the same file, not keys of that style ([07-interface-contracts.md §12.5](07-interface-contracts.md#125-doctor)).
 - **Implementation hint:** the `directories` crate (`ProjectDirs::cache_dir()`) resolves these paths per platform.
