@@ -790,14 +790,26 @@ Checks the bootstrap block in each installed harness instruction file ([04-infor
 
 ```
 $ recognitor doctor
-claude: C:\Users\me\.claude\CLAUDE.md: up to date
-antigravity: C:\Users\me\.gemini\AGENTS.md: block absent
-recognitor bootstrap write antigravity
-codex: C:\Users\me\.codex\AGENTS.md: misconfigured
+claude +
+antigravity -
+codex ↑
+opencode ?
+pi ×
+---
+recognitor bootstrap write antigravity, codex
 ```
 
-- **Line:** `<name>: <path>: <state>`. The state is one of `up to date`, `block absent`, `out of date`, `misconfigured`, `missing` (§5.3 of doc 04). The path is the instruction file, resolved.
-- **Suggestion:** the next line is exactly `recognitor bootstrap write <name>`, and only after `block absent` or `out of date`. `misconfigured` and `missing` get no suggestion: a one-marker file and a missing file stay as they are until someone fixes them by hand. `bootstrap write` and `bootstrap remove` are not commands in this version. The line names the fix.
+- **Line:** `<name> <mark>`, or `<name> <file> <mark>` when that harness lists more than one file. The path stays off the report. The marks are the states of §5.3 of doc 04:
+
+| Mark | State |
+| :--- | :--- |
+| `+` | up to date |
+| `-` | block absent |
+| `↑` | out of date |
+| `?` | misconfigured |
+| `×` | missing |
+
+- **Suggestion:** after the list, when any file is `-` or `↑`, a `---` line and one command: `recognitor bootstrap write <name>[, <name>...]`. Names are those harnesses, once each, in the order they first appear. One name has no comma. No such file means no `---` and no command. `?` and `×` are never listed: a one-marker file and a missing file stay as they are until someone fixes them by hand. `bootstrap write` and `bootstrap remove` are not commands in this version. The line names the fix.
 - **Order:** the four built-ins, then names the file adds, in file order. Files of one harness follow its `files` list.
 - **Not installed:** a harness whose directory is absent is skipped. Nothing is printed for it, and the directory is not created. When every harness is skipped, stdout and stderr stay empty and the exit code is 0.
 - **Vault:** after the table parses and every present harness directory is a directory, `doctor` compiles the payload the same way `recognitor bootstrap` does, including when every harness was skipped. No vault is a usage error (§2.1). A missing `bootstrap/index.md` is the same error as `bootstrap`.

@@ -170,10 +170,10 @@ fn block_absent_suggests_write_and_exits_1() {
     s.install_builtin("claude", &dir, Some(&["CLAUDE.md"]));
     let out = s.run(&["doctor"]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    let text = stdout(&out);
-    assert!(text.contains("claude:"), "{text}");
-    assert!(text.contains("block absent\n"), "{text}");
-    assert!(text.contains("recognitor bootstrap write claude\n"), "{text}");
+    assert_eq!(
+        stdout(&out),
+        "claude -\n---\nrecognitor bootstrap write claude\n"
+    );
     assert_eq!(stderr(&out), "");
 }
 
@@ -187,9 +187,7 @@ fn up_to_date_exits_0() {
     s.install_builtin("claude", &dir, Some(&["CLAUDE.md"]));
     let out = s.run(&["doctor"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    let text = stdout(&out);
-    assert!(text.contains("up to date\n"), "{text}");
-    assert!(!text.contains("write"), "{text}");
+    assert_eq!(stdout(&out), "claude +\n");
 }
 
 #[test]
@@ -203,9 +201,10 @@ fn out_of_date_from_wrong_stamp_suggests_write() {
     s.install_builtin("claude", &dir, Some(&["CLAUDE.md"]));
     let out = s.run(&["doctor"]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    let text = stdout(&out);
-    assert!(text.contains("out of date\n"), "{text}");
-    assert!(text.contains("recognitor bootstrap write claude\n"), "{text}");
+    assert_eq!(
+        stdout(&out),
+        "claude \u{2191}\n---\nrecognitor bootstrap write claude\n"
+    );
 }
 
 #[test]
@@ -221,7 +220,7 @@ fn crlf_body_is_out_of_date_against_lf_payload() {
     s.install_builtin("claude", &dir, Some(&["CLAUDE.md"]));
     let out = s.run(&["doctor"]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    assert!(stdout(&out).contains("out of date\n"), "{}", stdout(&out));
+    assert!(stdout(&out).starts_with("claude \u{2191}\n"), "{}", stdout(&out));
 }
 
 #[test]
@@ -254,13 +253,7 @@ directory = "{b}"
     fs::write(&s.config, toml).unwrap();
     let out = s.run(&["doctor"]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    let text = stdout(&out);
-    assert!(text.contains("tool-a:"), "{text}");
-    assert!(text.contains("misconfigured\n"), "{text}");
-    assert!(text.contains("tool-b:"), "{text}");
-    assert!(text.contains("missing\n"), "{text}");
-    assert!(!text.contains("write tool-a"), "{text}");
-    assert!(!text.contains("write tool-b"), "{text}");
+    assert_eq!(stdout(&out), "tool-a ?\ntool-b \u{00d7}\n");
 }
 
 #[test]

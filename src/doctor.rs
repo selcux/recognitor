@@ -4,7 +4,7 @@
 // See the LICENSE file in the repository root for full terms, including Exhibit A and Exhibit B.
 
 //! `recognitor doctor` (doc 04 §5.3, doc 07 §12.5): the read-only check of the bootstrap block in harness
-//! instruction files. The report lines and the exit code are that contract.
+//! instruction files.
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -47,13 +47,14 @@ pub enum FileState {
 }
 
 impl FileState {
-    fn label(self) -> &'static str {
+    /// One glyph every default terminal font can draw (doc 07 §12.5).
+    fn mark(self) -> &'static str {
         match self {
-            FileState::BlockAbsent => "block absent",
-            FileState::UpToDate => "up to date",
-            FileState::OutOfDate => "out of date",
-            FileState::Misconfigured => "misconfigured",
-            FileState::Missing => "missing",
+            FileState::UpToDate => "+",
+            FileState::BlockAbsent => "-",
+            FileState::OutOfDate => "\u{2191}", // ↑
+            FileState::Misconfigured => "?",
+            FileState::Missing => "\u{00d7}", // ×
         }
     }
 
@@ -66,11 +67,14 @@ impl FileState {
     }
 }
 
-/// One line of the report (and an optional suggestion line).
+/// One line of the report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileReport {
     pub harness: String,
+    /// Absolute path of the instruction file (for errors and classification).
     pub path: PathBuf,
+    /// Relative path as listed in the harness `files` entry.
+    pub file: String,
     pub state: FileState,
 }
 
@@ -81,19 +85,42 @@ pub struct DoctorReport {
 }
 
 impl DoctorReport {
-    /// True when any printed file is not up to date (provisional exit code 1).
+    /// True when any printed file is not up to date (doc 07 §12.5).
     pub fn failed(&self) -> bool {
         self.files.iter().any(|f| f.state.failed())
     }
 
-    /// Provisional report text: one state line per file, then a `write` suggestion when the note asks for it.
+    /// Report text (doc 07 §12.5): one short line per file, then one `write` command after `---` when any
+    /// file is block absent or out of date.
     pub fn render(&self) -> String {
-        let mut out = String::new();
+        if self.files.is_empty() {
+            return String::new();
+        }
+        let mut counts: Vec<(String, usize)> = Vec::new();
         for f in &self.files {
-            out.push_str(&format!("{}: {}: {}\n", f.harness, f.path.display(), f.state.label()));
-            if f.state.suggests_write() {
-                out.push_str(&format!("recognitor bootstrap write {}\n", f.harness));
+            if let Some((_, n)) = counts.iter_mut().find(|(name, _)| name == &f.harness) {
+                *n += 1;
+            } else {
+                counts.push((f.harness.clone(), 1));
             }
+        }
+        let multi = |name: &str| counts.iter().any(|(n, c)| n == name && *c > 1);
+
+        let mut out = String::new();
+        let mut write_names: Vec<String> = Vec::new();
+        for f in &self.files {
+            if multi(&f.harness) {
+                out.push_str(&format!("{} {} {}\n", f.harness, f.file, f.state.mark()));
+            } else {
+                out.push_str(&format!("{} {}\n", f.harness, f.state.mark()));
+            }
+            if f.state.suggests_write() && !write_names.iter().any(|n| n == &f.harness) {
+                write_names.push(f.harness.clone());
+            }
+        }
+        if !write_names.is_empty() {
+            out.push_str("---\n");
+            out.push_str(&format!("recognitor bootstrap write {}\n", write_names.join(", ")));
         }
         out
     }
@@ -491,9 +518,12 @@ fn parse_start_line(line: &[u8]) -> Option<String> {
     Some(String::from_utf8_lossy(hex).into_owned())
 }
 
+/// One installed instruction file: harness name, absolute path, relative path as listed in `files`.
+pub type InstalledFile = (String, PathBuf, String);
+
 /// Resolves which files to check: skips harnesses whose directory is absent; errors when a path exists and is not a
 /// directory. Call this before opening the vault so a shape error never sweeps.
-pub fn installed_files(harnesses: &[Harness]) -> Result<Vec<(String, PathBuf)>> {
+pub fn installed_files(harnesses: &[Harness]) -> Result<Vec<InstalledFile>> {
     let mut out = Vec::new();
     for h in harnesses {
         match fs::metadata(&h.directory) {
@@ -508,7 +538,7 @@ pub fn installed_files(harnesses: &[Harness]) -> Result<Vec<(String, PathBuf)>> 
             Ok(_) => {}
         }
         for file in &h.files {
-            out.push((h.name.clone(), h.directory.join(file)));
+            out.push((h.name.clone(), h.directory.join(file), file.clone()));
         }
     }
     Ok(out)
@@ -517,13 +547,13 @@ pub fn installed_files(harnesses: &[Harness]) -> Result<Vec<(String, PathBuf)>> 
 /// Classifies each installed instruction file against the compiled bootstrap payload.
 ///
 /// A path that exists and is not a file is an error and no report is produced. A missing named file is a report line.
-pub fn doctor(index: &mut Index, installed: &[(String, PathBuf)], max_tokens: usize) -> Result<DoctorReport> {
+pub fn doctor(index: &mut Index, installed: &[InstalledFile], max_tokens: usize) -> Result<DoctorReport> {
     let bootstrap = index.bootstrap()?;
     let payload = bootstrap.render(max_tokens);
     let payload_bytes = payload.as_bytes();
 
     let mut files = Vec::with_capacity(installed.len());
-    for (harness, path) in installed {
+    for (harness, path, file) in installed {
         let state = match fs::metadata(path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => FileState::Missing,
             Err(e) => return Err(Error::io(path, e)),
@@ -547,6 +577,7 @@ pub fn doctor(index: &mut Index, installed: &[(String, PathBuf)], max_tokens: us
         files.push(FileReport {
             harness: harness.clone(),
             path: path.clone(),
+            file: file.clone(),
             state,
         });
     }
@@ -817,45 +848,54 @@ mod tests {
         assert_eq!(classify_bytes(file.as_bytes(), b"x\n"), FileState::Misconfigured);
     }
 
+    fn row(harness: &str, file: &str, state: FileState) -> FileReport {
+        FileReport {
+            harness: harness.into(),
+            path: PathBuf::from(format!("/{harness}/{file}")),
+            file: file.into(),
+            state,
+        }
+    }
+
     #[test]
-    fn report_suggests_write_only_for_absent_and_out_of_date() {
+    fn report_collects_write_names_after_a_separator() {
         let report = DoctorReport {
             files: vec![
-                FileReport {
-                    harness: "a".into(),
-                    path: PathBuf::from("/a"),
-                    state: FileState::UpToDate,
-                },
-                FileReport {
-                    harness: "b".into(),
-                    path: PathBuf::from("/b"),
-                    state: FileState::BlockAbsent,
-                },
-                FileReport {
-                    harness: "c".into(),
-                    path: PathBuf::from("/c"),
-                    state: FileState::Misconfigured,
-                },
-                FileReport {
-                    harness: "d".into(),
-                    path: PathBuf::from("/d"),
-                    state: FileState::Missing,
-                },
-                FileReport {
-                    harness: "e".into(),
-                    path: PathBuf::from("/e"),
-                    state: FileState::OutOfDate,
-                },
+                row("a", "AGENTS.md", FileState::UpToDate),
+                row("b", "AGENTS.md", FileState::BlockAbsent),
+                row("c", "AGENTS.md", FileState::Misconfigured),
+                row("d", "AGENTS.md", FileState::Missing),
+                row("e", "AGENTS.md", FileState::OutOfDate),
             ],
         };
-        let text = report.render();
-        assert!(text.contains("a: /a: up to date\n"));
-        assert!(text.contains("b: /b: block absent\nrecognitor bootstrap write b\n"));
-        assert!(text.contains("c: /c: misconfigured\n"));
-        assert!(!text.contains("write c"));
-        assert!(text.contains("d: /d: missing\n"));
-        assert!(!text.contains("write d"));
-        assert!(text.contains("e: /e: out of date\nrecognitor bootstrap write e\n"));
+        assert_eq!(
+            report.render(),
+            "a +\nb -\nc ?\nd \u{00d7}\ne \u{2191}\n---\nrecognitor bootstrap write b, e\n"
+        );
         assert!(report.failed());
+    }
+
+    #[test]
+    fn a_multi_file_harness_shows_the_relative_path() {
+        let report = DoctorReport {
+            files: vec![
+                row("pi", "AGENTS.md", FileState::UpToDate),
+                row("pi", "extra.md", FileState::Missing),
+                row("claude", "CLAUDE.md", FileState::BlockAbsent),
+            ],
+        };
+        assert_eq!(
+            report.render(),
+            "pi AGENTS.md +\npi extra.md \u{00d7}\nclaude -\n---\nrecognitor bootstrap write claude\n"
+        );
+    }
+
+    #[test]
+    fn an_all_up_to_date_report_has_no_write_block() {
+        let report = DoctorReport {
+            files: vec![row("claude", "CLAUDE.md", FileState::UpToDate)],
+        };
+        assert_eq!(report.render(), "claude +\n");
+        assert!(!report.failed());
     }
 }
