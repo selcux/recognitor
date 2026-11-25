@@ -90,14 +90,15 @@ variables:
         if ($LASTEXITCODE -ne 0) { throw "Failed to extract sccache.exe" }
         Remove-Item sccache.zip
       }
-    - $env:Path = "$toolsDir;$env:USERPROFILE\.cargo\bin;$env:Path"
+    - $env:Path = "$toolsDir;$env:CARGO_HOME\bin;$env:Path"
     - sccache --start-server
   after_script:
     - |
       $toolsDir = "$env:CI_PROJECT_DIR\.tools"
       if (Test-Path "$toolsDir\sccache.exe") {
         & "$toolsDir\sccache.exe" --show-stats
-        & "$toolsDir\sccache.exe" --stop-server
+        try { & "$toolsDir\sccache.exe" --stop-server *>$null } catch {}
+        $global:LASTEXITCODE = 0
       }
 
 # --- Check Stage ---
