@@ -231,7 +231,7 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 
 | Tool | Use |
 | :--- | :--- |
-| `load_bootstrap` | Standing instructions, once at session start, unless a hook already loaded them |
+| `load_bootstrap` | Standing instructions, once at session start, unless a hook or the written block already delivered them |
 | `load_namespace` | A namespace's entry note, once when work enters it |
 | `search` | Full-text search, 5 hits per page, with summaries and matching facts |
 | `context` | A note's links out and in, with summaries |
@@ -281,24 +281,40 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 
    To serve a vault other than the configured one, add `"--vault", "/path/to/vault"` to `args`, or set `RECOGNITOR_VAULT` in the entry's environment.
 
-4. **Load the bootstrap and the project's entry note at session start.** Add one line to each instruction file
-   (`AGENTS.md`, or your client's equivalent).
+4. **Write the bootstrap into your harness files.** Declare each harness you use in the config file, with the
+   directory the tool reads and the instruction file inside it:
 
-   Global `AGENTS.md`, read in every project:
+   ```toml
+   [harness.claude]
+   directory = "~/.claude"
+   files = ["CLAUDE.md"]
 
-   ```markdown
-   Session start: call `load_bootstrap()`.
+   [harness.codex]
+   directory = "~/.codex"
    ```
 
-   The project's `AGENTS.md`, with that project's namespace:
+   `files` omitted means `AGENTS.md`. The config file sits in the per-user local config folder
+   (`%LOCALAPPDATA%\recognitor\config\config.toml` on Windows). Then put the current payload in each file, and
+   check the result:
+
+   ```bash
+   recognitor bootstrap write claude codex
+   recognitor doctor
+   ```
+
+   `bootstrap write` appends the payload between two marker lines, or replaces the block when the notes have
+   changed, so the harness reads the bootstrap as part of its own instructions. A harness whose directory does
+   not exist is skipped, so install the tool first. `doctor` prints one line per harness and, when a file is
+   stale, the `bootstrap write` command that fixes it. Run `bootstrap write` again after editing the notes in
+   `bootstrap/`.
+
+   A client that cannot take the block can be told to call `load_bootstrap()` at session start instead.
+
+5. **Load the project's entry note at session start.** In the project's `AGENTS.md`, add:
 
    ```markdown
    Session start: call `load_namespace('<namespace name>')`.
    ```
-
-   Once your harness table names those files, `recognitor bootstrap write claude codex` puts the current payload
-   between the marker lines, and `recognitor doctor` checks that it still matches. Use the harness names from your
-   own `[harness.<name>]` tables.
 
 On Windows, a running server keeps the binary open. Disconnect the server in your client first, then reinstall.
 

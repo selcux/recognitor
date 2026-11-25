@@ -136,8 +136,9 @@ All other knowledge notes are cold storage, queried through full-text search, ve
 
 ### 5.1 Session Start
 
-Two ways load the same content:
+Three ways deliver the same content:
 
+- **Block:** `recognitor bootstrap write <harness>...` copies the payload into the harness instruction file, between two marker lines (§5.3). The harness reads it as part of its own instructions, so no tool call is needed at session start, and `doctor` reports when the block is stale.
 - **Instruction:** the harness instruction file says: "Session start: call `load_bootstrap()`, then `load_namespace('<project>')`."
 - **Hook (preferred where supported):** a session-start hook runs `recognitor bootstrap`, and the harness adds its output to the context. Loading then does not depend on the model following an instruction. Claude Code supports such hooks.
 
@@ -148,10 +149,10 @@ Harnesses load their own instruction files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md
 | Lives in harness instruction files | Lives in the Recognitor bootstrap |
 | :--- | :--- |
 | Repository facts shared with other contributors: build and test commands, code conventions, project rules | Who the user is and how to talk to the user |
-| The pointer to Recognitor (§5.1) | Global rules that apply in every project |
+| The pointer to Recognitor, or the written block (§5.1) | Global rules that apply in every project |
 | Harness-only mechanics: permissions, hooks, tool settings | |
 
-A rule stored in both places drifts, and the two copies eventually conflict.
+A rule stored in both places drifts, and the two copies eventually conflict. The block is not a second home: `bootstrap write` generates it from the bootstrap notes, and `doctor` reports when it no longer matches.
 
 ### 5.3 The bootstrap block
 

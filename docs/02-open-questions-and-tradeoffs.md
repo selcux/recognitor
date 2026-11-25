@@ -162,7 +162,7 @@ Resolved in favor of **three stores separated by location** (bootstrap, knowledg
 - **Global rules only:** everything in the bootstrap applies in every project. Project rules stay in the repository's own instruction files (`AGENTS.md`, `CLAUDE.md`, Cursor rules), so each rule has one home.
 - **Namespace entry:** every namespace has an `index.md`; `load_namespace(ns)` returns it and keeps no state ([07-interface-contracts.md §3](07-interface-contracts.md#3-load_namespacens)).
 - **Same tables:** bootstrap notes share the schema but get no full-text or vector rows, so search cannot return them.
-- **Session start:** an instruction in the harness file, or a session-start hook running `recognitor bootstrap` where the harness supports one. `recognitor doctor` checks that each installed harness file still holds that payload, and `recognitor bootstrap write <harness>...` puts it there ([04-information-stores-and-lifecycle.md §5.3](04-information-stores-and-lifecycle.md#53-the-bootstrap-block)).
+- **Session start:** the written block or an instruction in the harness file, or a session-start hook running `recognitor bootstrap` where the harness supports one. `recognitor doctor` checks that each installed harness file still holds that payload, and `recognitor bootstrap write <harness>...` puts it there ([04-information-stores-and-lifecycle.md §5.3](04-information-stores-and-lifecycle.md#53-the-bootstrap-block)).
 - **Rejected: a separate database table for the bootstrap.** Same Markdown means the same parser, link resolver, and lint; leaving bootstrap notes out of the search indexes gives the same isolation.
 - **Rejected: per-namespace `rules/` folders.** Project rules already live in the project repository's instruction files.
 
