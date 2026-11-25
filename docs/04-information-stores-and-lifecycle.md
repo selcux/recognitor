@@ -207,7 +207,7 @@ There is no `enabled` field. A harness whose directory is absent is skipped. The
 
 `bootstrap write` checks every named file before it edits any. An unknown harness name, a harness directory that exists and is not a directory, a missing instruction file, and a file with one marker line are errors, and no file is changed. A file with no block gets the block appended. A file whose block is out of date gets the block replaced, and the text around it keeps its bytes. A file that is already up to date is left as it is. A payload that itself contains a marker line is refused, because the block it would build could not be read back.
 
-`write` reports each modified file as `wrote: <path>` and prints nothing when nothing changed. When every named harness is skipped, it changes nothing, exits 0, and does not open the vault.
+`write` prints `Wrote:` and one `<harness>: <path>` line per modified file, or nothing when nothing changed. When every named harness is skipped, it changes nothing, exits 0, and does not open the vault.
 
 `bootstrap remove` uses the same checks. It deletes a complete block, whether it is up to date or out of date, and leaves the rest of the file. A file with no block is unchanged. It prints `Removed:` and one `<harness>: <path>` line per modified file, or nothing when nothing changed. It does not compile the payload and does not open the vault.
 

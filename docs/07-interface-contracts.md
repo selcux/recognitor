@@ -873,8 +873,9 @@ Puts the current bootstrap payload into each named harness's instruction file ([
 
 ```
 $ recognitor bootstrap write claude codex
-wrote: C:\Users\me\.claude\CLAUDE.md
-wrote: C:\Users\me\.codex\AGENTS.md
+Wrote:
+claude: C:\Users\me\.claude\CLAUDE.md
+codex: C:\Users\me\.codex\AGENTS.md
 ```
 
 - **Names:** one or more, as positionals, matched case-insensitively against the `[harness.<name>]` tables. `Claude` selects `claude`. A name given twice is processed once. The order of the lines is the order of the names.
@@ -882,7 +883,7 @@ wrote: C:\Users\me\.codex\AGENTS.md
 - **Not installed:** a harness whose directory is absent is skipped, and the directory is not created. If every named harness is skipped, nothing is printed, the exit code is 0, and the vault is not opened.
 - **Payload:** the same text `recognitor bootstrap` prints, including the budget warning, with `bootstrap.max_tokens` applied. The sha in the start line is the SHA-256 of the bytes written between the lines.
 - **Edit:** a file with no marker line gets the block appended after its last line. A file with an out-of-date block gets that block replaced; the text before and after keeps its bytes. An up-to-date file is not written.
-- **Streams:** `wrote: <path>` goes to stdout, one line per modified file, and nothing is printed when no file changed. Errors go to stderr as `error:`, with nothing on stdout.
+- **Streams:** `Wrote:` goes to stdout once, then `<name>: <path>` for each modified file, and nothing is printed when no file changed. A harness with more than one file gets one line per file and repeats its name. Errors go to stderr as `error:`, with nothing on stdout.
 - **Order of checks:** the table, then the directories, then every file, then the payload. A bad table or a missing file never opens the vault, so it does not sweep.
 - **Write failure:** a file system failure while writing stops the command. Files already written stay written; the file that failed is unchanged, because each file is replaced whole.
 

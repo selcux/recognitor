@@ -134,7 +134,7 @@ fn write_appends_the_block_and_reports_the_file() {
 
     let out = s.run(&["bootstrap", "write", "claude"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert_eq!(stdout(&out), format!("wrote: {}\n", file.display()));
+    assert_eq!(stdout(&out), format!("Wrote:\nclaude: {}\n", file.display()));
     assert_eq!(stderr(&out), "");
 
     let payload = s.payload();
@@ -163,7 +163,7 @@ fn write_fills_an_empty_instruction_file() {
 
     let out = s.run(&["bootstrap", "write", "codex"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert_eq!(stdout(&out), format!("wrote: {}\n", file.display()));
+    assert_eq!(stdout(&out), format!("Wrote:\ncodex: {}\n", file.display()));
 
     let payload = s.payload();
     assert_eq!(fs::read(&file).unwrap(), render_block(payload.as_bytes()));
@@ -184,7 +184,7 @@ fn write_updates_every_file_of_one_harness() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
-        format!("wrote: {}\nwrote: {}\n", agents.display(), extra.display())
+        format!("Wrote:\npi: {}\npi: {}\n", agents.display(), extra.display())
     );
 
     let payload = s.payload();
@@ -229,7 +229,7 @@ fn write_replaces_an_out_of_date_block_and_keeps_the_rest() {
 
     let out = s.run(&["bootstrap", "write", "claude"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    assert_eq!(stdout(&out), format!("wrote: {}\n", file.display()));
+    assert_eq!(stdout(&out), format!("Wrote:\nclaude: {}\n", file.display()));
 
     let payload = s.payload();
     let expected = [
@@ -421,7 +421,11 @@ fn multiple_harnesses_are_written_in_the_order_named_and_duplicates_once() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
-        format!("wrote: {}\nwrote: {}\n", codex_file.display(), claude_file.display())
+        format!(
+            "Wrote:\ncodex: {}\nclaude: {}\n",
+            codex_file.display(),
+            claude_file.display()
+        )
     );
 }
 

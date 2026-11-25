@@ -93,11 +93,11 @@ pub fn read_targets(installed: &[InstalledFile]) -> Result<Vec<Target>> {
     Ok(targets)
 }
 
-/// Writes the compiled payload into each target that needs it and returns the files that changed.
+/// Writes the compiled payload into each target that needs it and returns the targets that changed.
 ///
 /// The payload is compiled once. A payload that itself contains a marker line is refused, because the block it
 /// would build could not be read back.
-pub fn write(index: &mut Index, targets: &[Target], max_tokens: usize) -> Result<Vec<PathBuf>> {
+pub fn write<'a>(index: &mut Index, targets: &'a [Target], max_tokens: usize) -> Result<Vec<&'a Target>> {
     if targets.is_empty() {
         return Ok(Vec::new());
     }
@@ -121,7 +121,7 @@ pub fn write(index: &mut Index, targets: &[Target], max_tokens: usize) -> Result
             FileState::Misconfigured | FileState::Missing => continue,
         };
         crate::write::replace_file(&target.path, &new_bytes).map_err(|e| Error::io(&target.path, e))?;
-        written.push(target.path.clone());
+        written.push(target);
     }
     Ok(written)
 }

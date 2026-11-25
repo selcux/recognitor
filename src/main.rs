@@ -412,10 +412,14 @@ fn run_bootstrap_write(args: &Args, names: &[String]) -> recognitor::Result<Stri
     let (mut index, _) = open_index(args)?;
     let max_tokens = config::bootstrap_max_tokens(&config_file)?.unwrap_or(DEFAULT_MAX_TOKENS);
     let written = recognitor::bootstrap_write::write(&mut index, &targets, max_tokens)?;
-    Ok(written
-        .iter()
-        .map(|path| format!("wrote: {}\n", path.display()))
-        .collect())
+    if written.is_empty() {
+        return Ok(String::new());
+    }
+    let mut out = String::from("Wrote:\n");
+    for target in written {
+        out.push_str(&format!("{}: {}\n", target.harness, target.path.display()));
+    }
+    Ok(out)
 }
 
 /// `recognitor bootstrap remove <harness>...`: parse the harness table and read every named file first, then delete
