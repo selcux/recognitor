@@ -5,9 +5,9 @@
 
 //! `recognitor` CLI: a thin layer over the library. Commands are defined in doc 07 §12.
 //!
-//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `bootstrap write`, `move`, `relink`,
-//! `lint`, `doctor`, `ghosts`, `trash empty`, `mcp` and `config get/set`. The vault comes from `--vault`, else
-//! `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
+//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `bootstrap write`, `bootstrap remove`,
+//! `move`, `relink`, `lint`, `doctor`, `ghosts`, `trash empty`, `mcp` and `config get/set`. The vault comes from
+//! `--vault`, else `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
 //!
 //! `move` is the one command that talks to the user (doc 07 §6.1): it moves the note, prints the broken links, asks which
 //! linking notes to relink, and relinks them. The write lock is never held while it waits for the answer: the move
@@ -31,6 +31,7 @@ const USAGE: &str = "usage: recognitor sync|rebuild [--report] [--vault <path>]
        recognitor read <note> [--section <heading>] [--query <text>] [--vault <path>]
        recognitor bootstrap [--list] [--vault <path>]
        recognitor bootstrap write <harness>... [--vault <path>]
+       recognitor bootstrap remove <harness>...
        recognitor move <note> <new_path> [--relink all|none|ask] [--vault <path>]
        recognitor relink <old> <new> <note>... [--vault <path>]
        recognitor lint [--strict] [--vault <path>]
@@ -50,6 +51,8 @@ commands:
   bootstrap                 print the bootstrap payload (the notes linked from bootstrap/index.md)
   bootstrap write <harness>...
                             insert or replace the bootstrap block in each installed harness instruction file
+  bootstrap remove <harness>...
+                            strip the bootstrap block from each installed harness instruction file
   move <note> <new_path>    move or rename a note, then ask which linking notes to relink; new_path is from the vault root
   relink <old> <new> <note>...
                             rewrite the links to a moved note in the notes given; old is its id before the move
@@ -114,6 +117,9 @@ enum Command {
         list: bool,
     },
     BootstrapWrite {
+        harnesses: Vec<String>,
+    },
+    BootstrapRemove {
         harnesses: Vec<String>,
     },
     Move {
@@ -237,6 +243,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
         ("bootstrap", [sub, ..]) if sub == "write" => {
             return Err("bootstrap write needs at least one harness".to_string());
         }
+        ("bootstrap", [sub, harnesses @ ..]) if sub == "remove" && !harnesses.is_empty() => Command::BootstrapRemove {
+            harnesses: harnesses.to_vec(),
+        },
+        ("bootstrap", [sub, ..]) if sub == "remove" => {
+            return Err("bootstrap remove needs at least one harness".to_string());
+        }
         ("move", [note, new_path]) => Command::Move {
             note: note.clone(),
             new_path: new_path.clone(),
@@ -305,6 +317,7 @@ fn run(args: &Args) -> recognitor::Result<String> {
         Command::Mcp => return run_mcp(args),
         Command::TrashEmpty => return run_trash_empty(args),
         Command::BootstrapWrite { harnesses } => return run_bootstrap_write(args, harnesses),
+        Command::BootstrapRemove { harnesses } => return run_bootstrap_remove(harnesses),
         other => other,
     };
     let (mut index, config_file) = open_index(args)?;
@@ -344,7 +357,7 @@ fn run(args: &Args) -> recognitor::Result<String> {
             args.vault.as_deref(),
         )),
         Command::Config(cmd) => run_config(cmd),
-        Command::BootstrapWrite { .. } => Ok(String::new()),
+        Command::BootstrapWrite { .. } | Command::BootstrapRemove { .. } => Ok(String::new()),
         // `main` runs `lint` and `doctor` itself, because their exit codes depend on what they find.
         Command::Lint { .. } | Command::Doctor => Ok(String::new()),
         Command::Mcp => run_mcp(args),
@@ -403,6 +416,26 @@ fn run_bootstrap_write(args: &Args, names: &[String]) -> recognitor::Result<Stri
         .iter()
         .map(|path| format!("wrote: {}\n", path.display()))
         .collect())
+}
+
+/// `recognitor bootstrap remove <harness>...`: parse the harness table and read every named file first, then delete
+/// each complete block. A missing file or a one-marker file stops the command before any edit; a name that is not in
+/// the config is a bad argument. The payload is never compiled and the vault is not opened.
+fn run_bootstrap_remove(names: &[String]) -> recognitor::Result<String> {
+    let config_file = config::config_path()?;
+    let harnesses = recognitor::harness::load_harnesses(&config_file)?;
+    let selected = recognitor::bootstrap_write::select(&harnesses, names)?;
+    let installed = recognitor::harness::installed_files(&selected)?;
+    let targets = recognitor::bootstrap_write::read_targets(&installed)?;
+    let removed = recognitor::bootstrap_remove::remove(&targets)?;
+    if removed.is_empty() {
+        return Ok(String::new());
+    }
+    let mut out = String::from("Removed:\n");
+    for target in removed {
+        out.push_str(&format!("{}: {}\n", target.harness, target.path.display()));
+    }
+    Ok(out)
 }
 
 /// `recognitor doctor`: parse the harness table and stat directories first (so a bad table or a non-directory never

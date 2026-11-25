@@ -21,6 +21,7 @@ use crate::index::Index;
 /// One instruction file read and checked before any edit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
+    pub harness: String,
     pub path: PathBuf,
     pub bytes: Vec<u8>,
     pub block: Block,
@@ -45,13 +46,13 @@ pub fn select(harnesses: &[Harness], names: &[String]) -> Result<Vec<Harness>> {
     Ok(selected)
 }
 
-/// Reads every installed instruction file and refuses the ones `write` cannot touch.
+/// Reads every installed instruction file and refuses the ones `write` and `remove` cannot touch.
 ///
 /// The payload is not needed here: a missing file and a block with one marker line are errors however the payload
 /// turns out. A file with no block, a complete block, or an up-to-date block is a target.
 pub fn read_targets(installed: &[InstalledFile]) -> Result<Vec<Target>> {
     let mut targets = Vec::with_capacity(installed.len());
-    for (_, path, _) in installed {
+    for (harness, path, _) in installed {
         let meta = match fs::metadata(path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Err(Error::InstructionFile {
@@ -83,6 +84,7 @@ pub fn read_targets(installed: &[InstalledFile]) -> Result<Vec<Target>> {
             });
         }
         targets.push(Target {
+            harness: harness.clone(),
             path: path.clone(),
             bytes,
             block,

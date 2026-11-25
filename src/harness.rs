@@ -491,6 +491,14 @@ pub fn replace_block(content: &[u8], span: &BlockSpan, payload: &[u8]) -> Vec<u8
     out
 }
 
+/// `content` with the complete block at `span` deleted. The text before and after keeps its bytes.
+pub fn remove_block(content: &[u8], span: &BlockSpan) -> Vec<u8> {
+    let mut out = Vec::with_capacity(content.len() - (span.end - span.start));
+    out.extend_from_slice(&content[..span.start]);
+    out.extend_from_slice(&content[span.end..]);
+    out
+}
+
 /// Classifies the raw bytes of one instruction file against the compiled payload.
 pub fn classify_bytes(content: &[u8], payload: &[u8]) -> FileState {
     match block(content) {
@@ -816,6 +824,16 @@ mod tests {
             ]
             .concat()
         );
+    }
+
+    #[test]
+    fn remove_block_keeps_the_text_around_it() {
+        let wrapped = render_block(b"body\n");
+        let file = [b"before\n".as_slice(), &wrapped, b"after\n".as_slice()].concat();
+        let Block::Complete(span) = block(&file) else {
+            panic!("expected a complete block");
+        };
+        assert_eq!(remove_block(&file, &span), b"before\nafter\n");
     }
 
     #[test]

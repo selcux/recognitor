@@ -9,6 +9,7 @@
 //! them. The design lives in `docs/`; doc 07 lists every interface this crate exposes.
 
 pub mod bootstrap;
+pub mod bootstrap_remove;
 pub mod bootstrap_write;
 pub mod config;
 pub mod context;

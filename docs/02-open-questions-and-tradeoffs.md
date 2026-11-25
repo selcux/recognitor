@@ -147,7 +147,7 @@ Resolved in favor of lightweight **Structural Linting** plus optional **vault-wi
 
 Resolved in [07-interface-contracts.md](07-interface-contracts.md): a stateless server, MCP tools for every-session agent work, and a CLI limited to what a human cannot do by hand.
 - **MCP:** `load_bootstrap`, `load_namespace`, `search`, `context`, `read_note`, `write_note`, `edit_note`, `move_note`, `relink`, `delete_note`.
-- **CLI:** `bootstrap [--list]`, `bootstrap write <harness>...`, `search`, `context`, `read`, `move`, `relink`, `ghosts [<link>]`, `lint [--strict]`, `doctor`, `trash empty`, `sync`, `rebuild`, `config get/set`. No write or edit commands for notes: humans edit the files directly. `doctor` only reads harness instruction files; `bootstrap write` is the one command that edits them ([07-interface-contracts.md §12.6](07-interface-contracts.md#126-bootstrap-write-harness)).
+- **CLI:** `bootstrap [--list]`, `bootstrap write <harness>...`, `bootstrap remove <harness>...`, `search`, `context`, `read`, `move`, `relink`, `ghosts [<link>]`, `lint [--strict]`, `doctor`, `trash empty`, `sync`, `rebuild`, `config get/set`. No write or edit commands for notes: humans edit the files directly. `doctor` only reads harness instruction files; `bootstrap write` and `bootstrap remove` are the commands that edit them ([07-interface-contracts.md §12.6](07-interface-contracts.md#126-bootstrap-write-harness), [§12.7](07-interface-contracts.md#127-bootstrap-remove-harness)).
 - **Rejected:** a raw-SQL `query` command, a `--json` output flag, and `ghosts` as an MCP tool.
 - **Order (DR1-15):** every schema change must now be justified by a contract in doc 07.
 

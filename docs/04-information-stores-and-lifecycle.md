@@ -138,7 +138,7 @@ All other knowledge notes are cold storage, queried through full-text search, ve
 
 Three ways deliver the same content:
 
-- **Block:** `recognitor bootstrap write <harness>...` copies the payload into the harness instruction file, between two marker lines (§5.3). The harness reads it as part of its own instructions, so no tool call is needed at session start, and `doctor` reports when the block is stale.
+- **Block:** `recognitor bootstrap write <harness>...` copies the payload into the harness instruction file, between two marker lines (§5.3); `recognitor bootstrap remove <harness>...` strips it again. The harness reads it as part of its own instructions, so no tool call is needed at session start, and `doctor` reports when the block is stale.
 - **Instruction:** the harness instruction file says: "Session start: call `load_bootstrap()`, then `load_namespace('<project>')`."
 - **Hook (preferred where supported):** a session-start hook runs `recognitor bootstrap`, and the harness adds its output to the context. Loading then does not depend on the model following an instruction. Claude Code supports such hooks.
 
@@ -156,7 +156,7 @@ A rule stored in both places drifts, and the two copies eventually conflict. The
 
 ### 5.3 The bootstrap block
 
-`recognitor doctor` is the read-only check that each installed harness instruction file holds the current bootstrap payload. `recognitor bootstrap write <harness>...` is the fix: it inserts the block, or replaces it when the bytes differ. The report lines and exit codes are [07-interface-contracts.md §12.5](07-interface-contracts.md#125-doctor); the write command and its checks are [§12.6](07-interface-contracts.md#126-bootstrap-write-harness) there.
+`recognitor doctor` is the read-only check that each installed harness instruction file holds the current bootstrap payload. `recognitor bootstrap write <harness>...` is the fix: it inserts the block, or replaces it when the bytes differ. `recognitor bootstrap remove <harness>...` strips the block again. The report lines and exit codes are [07-interface-contracts.md §12.5](07-interface-contracts.md#125-doctor); the write command and its checks are [§12.6](07-interface-contracts.md#126-bootstrap-write-harness) there, and remove is [§12.7](07-interface-contracts.md#127-bootstrap-remove-harness).
 
 The block is two lines around the text `recognitor bootstrap` prints. That text is the payload of §2.2, and the budget warning when the estimate is over `bootstrap.max_tokens`.
 
@@ -180,9 +180,9 @@ A marker is a whole line. One trailing carriage return is stripped before the li
 
 For a missing block or an out-of-date block, `doctor` suggests `recognitor bootstrap write <harness>`, with the harness names separated by spaces so the printed command runs. A misconfigured file is reported as misconfigured, with no suggestion. The file stays as it is until someone fixes it by hand. `doctor` still lists the other harnesses. A missing file is reported the same way: listed, no suggestion, and the other files still follow.
 
-A harness whose directory is absent is not installed. `doctor` and `write` skip it, do not create the directory, and do not treat the absence as an error.
+A harness whose directory is absent is not installed. `doctor`, `write`, and `remove` skip it, do not create the directory, and do not treat the absence as an error.
 
-`doctor` and `write` read the `[harness.<name>]` tables in the config file and nothing else. A missing file declares no harness. The file is not rewritten. `files` omitted or `[]` means `AGENTS.md` in that directory. A table with no `directory` is an error.
+`doctor`, `write`, and `remove` read the `[harness.<name>]` tables in the config file and nothing else. A missing file declares no harness. The file is not rewritten. `files` omitted or `[]` means `AGENTS.md` in that directory. A table with no `directory` is an error.
 
 One config that names the four common tools:
 
@@ -208,6 +208,8 @@ There is no `enabled` field. A harness whose directory is absent is skipped. The
 `bootstrap write` checks every named file before it edits any. An unknown harness name, a harness directory that exists and is not a directory, a missing instruction file, and a file with one marker line are errors, and no file is changed. A file with no block gets the block appended. A file whose block is out of date gets the block replaced, and the text around it keeps its bytes. A file that is already up to date is left as it is. A payload that itself contains a marker line is refused, because the block it would build could not be read back.
 
 `write` reports each modified file as `wrote: <path>` and prints nothing when nothing changed. When every named harness is skipped, it changes nothing, exits 0, and does not open the vault.
+
+`bootstrap remove` uses the same checks. It deletes a complete block, whether it is up to date or out of date, and leaves the rest of the file. A file with no block is unchanged. It prints `Removed:` and one `<harness>: <path>` line per modified file, or nothing when nothing changed. It does not compile the payload and does not open the vault.
 
 ---
 

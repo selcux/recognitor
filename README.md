@@ -249,12 +249,15 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 | `lint [--strict]` | Report case twins, missing entry points, type schema misses, and other problems. `--strict` fails on warnings too, for a pre-commit hook or CI | ✅ |
 | `doctor` | Check that each installed harness instruction file holds the current bootstrap payload | ✅ |
 | `bootstrap write <harness>...` | Insert or replace the bootstrap block in each installed harness instruction file | ✅ |
+| `bootstrap remove <harness>...` | Strip the bootstrap block from each installed harness instruction file | ✅ |
 | `mcp` | Serve the tools to one assistant session over stdio | ✅ |
 | `config get/set` | Read and change the config file | ✅ |
 | `ghosts [<link>]` | List links to missing notes, with a hint where a moved note went. With a link: the notes that hold it, and the `relink` command when there is a hint | ✅ |
 | `trash empty` | Clear `.recognitor/trash` | ✅ |
 
 ## Setup
+
+### Install
 
 1. **Build and install** the binary:
 
@@ -281,21 +284,27 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 
    To serve a vault other than the configured one, add `"--vault", "/path/to/vault"` to `args`, or set `RECOGNITOR_VAULT` in the entry's environment.
 
-4. **Write the bootstrap into your harness files.** Declare each harness you use in the config file, with the
-   directory the tool reads and the instruction file inside it:
+4. **Write the bootstrap into your harness files.** The default config file lists the four common harnesses,
+   with the directory each tool reads and the instruction file inside it:
 
    ```toml
    [harness.claude]
    directory = "~/.claude"
    files = ["CLAUDE.md"]
 
+   [harness.antigravity]
+   directory = "~/.gemini"
+
    [harness.codex]
    directory = "~/.codex"
+
+   [harness.opencode]
+   directory = "~/.config/opencode"
    ```
 
-   `files` omitted means `AGENTS.md`. The config file sits in the per-user local config folder
-   (`%LOCALAPPDATA%\recognitor\config\config.toml` on Windows). Then put the current payload in each file, and
-   check the result:
+   Adjust or remove the tables you do not use. `files` omitted means `AGENTS.md`. The config file sits in the
+   per-user local config folder (`%LOCALAPPDATA%\recognitor\config\config.toml` on Windows). Then put the current
+   payload in each file, and check the result:
 
    ```bash
    recognitor bootstrap write claude codex
@@ -335,13 +344,23 @@ recognitor ghosts
 
 `sync --report` prints extra detail for checking the index. Everyday use can skip it.
 
+### Remove
+
+To strip the bootstrap block from the harness files:
+
+```bash
+recognitor bootstrap remove claude codex
+```
+
+It deletes the block and leaves the rest of each file unchanged. It prints `Removed:` and one line per modified file. A file with no block is left alone. The `[harness.*]` tables stay in the config; delete them by hand when you no longer use those tools. The command does not need the vault.
+
 ## Status
 
 | Area | State |
 | :--- | :--- |
 | Read tools and the MCP server | ✅ Built and tested |
 | Write tools | ✅ Built and tested |
-| CLI `lint`, `doctor`, `bootstrap write`, `ghosts` | ✅ Built and tested |
+| CLI `lint`, `doctor`, `bootstrap write`, `bootstrap remove`, `ghosts` | ✅ Built and tested |
 | CLI `trash empty` | ✅ Built and tested |
 | Search ranking | ✅ Verified at 98% recall@5 with the retrieval benchmark |
 | 100× scale & latency | ✅ Verified: 10k notes, 100k observations, 20k edges (p95: 8.1s rebuild, 32ms sweep, 6ms search) |
