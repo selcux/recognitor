@@ -18,6 +18,10 @@ workflow:
 default:
   interruptible: true
 
+variables:
+  FF_USE_FASTZIP: "true"
+  CACHE_COMPRESSION_LEVEL: "fastest"
+
 # Paths that can change what the Rust jobs do. An allowlist on purpose: `rules:changes` has no negation, and a
 # `when: never` rule on docs would skip commits that mix docs and code. A commit that touches none of these runs
 # only secret_detection. Any `include_str!`/`include_bytes!`/`include!` of a file outside these paths must be added
@@ -36,25 +40,72 @@ default:
   - clippy.toml
   - .gitattributes         # eol=lf changes how the tests see line endings
   - .gitlab-ci.yml         # a CI edit must validate itself
-  - docs/07-interface-contracts.md  # tests/mcp.rs include_str!s it
+  - docs/07-interface-contracts.md  # tests/integration/mcp.rs include_str!s it
 
 .rust-linux:
-  image: rust:1.85-bookworm
-  before_script:
-    - rustup component add clippy rustfmt
+  image: rust:bookworm
 
 .rust-windows:
   tags:
     - saas-windows-medium-amd64
+  variables:
+    CARGO_HOME: "$CI_PROJECT_DIR\\.cargo"
+    SCCACHE_DIR: "$CI_PROJECT_DIR\\.sccache"
+    SCCACHE_CACHE_SIZE: "2G"
+    CARGO_INCREMENTAL: "0"
+    RUSTC_WRAPPER: "sccache"
+    SCCACHE_VERSION: "v0.20.1"
+    SCCACHE_SHA256: "ca500a01139e9af8d5f5a5e69b6a0dd941ed79ed3399a91cc35bba484fe732fa"
+  cache:
+    - key:
+        files:
+          - Cargo.lock
+        prefix: "windows-cargo"
+      paths:
+        - .cargo/registry/index/
+        - .cargo/registry/cache/
+        - .cargo/git/
+    - key: "windows-sccache-$SCCACHE_VERSION-$CI_COMMIT_REF_SLUG"
+      fallback_keys:
+        - "windows-sccache-$SCCACHE_VERSION-$CI_DEFAULT_BRANCH"
+      paths:
+        - .sccache/
+        - .tools/
   before_script:
-    - Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile "rustup-init.exe"
-    - .\rustup-init.exe -y --default-toolchain stable
-    - $env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path
+    - curl.exe -sSfL "https://win.rustup.rs/x86_64" -o rustup-init.exe
+    - .\rustup-init.exe -y --profile minimal --default-toolchain stable --no-modify-path
+    - Remove-Item rustup-init.exe
+    - |
+      $toolsDir = "$env:CI_PROJECT_DIR\.tools"
+      if (!(Test-Path "$toolsDir\sccache.exe")) {
+        New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+        $url = "https://github.com/mozilla/sccache/releases/download/$env:SCCACHE_VERSION/sccache-$env:SCCACHE_VERSION-x86_64-pc-windows-msvc.zip"
+        curl.exe -sSfL $url -o sccache.zip
+        if ($LASTEXITCODE -ne 0) { throw "Failed to download sccache" }
+        $actual = (Get-FileHash sccache.zip -Algorithm SHA256).Hash
+        if ($actual -ne $env:SCCACHE_SHA256) {
+          throw "sccache SHA-256 mismatch: expected $env:SCCACHE_SHA256, got $actual"
+        }
+        7z e sccache.zip "-o$toolsDir" sccache.exe -r -y | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to extract sccache.exe" }
+        Remove-Item sccache.zip
+      }
+    - $env:Path = "$toolsDir;$env:USERPROFILE\.cargo\bin;$env:Path"
+    - sccache --start-server
+  after_script:
+    - |
+      $toolsDir = "$env:CI_PROJECT_DIR\.tools"
+      if (Test-Path "$toolsDir\sccache.exe") {
+        & "$toolsDir\sccache.exe" --show-stats
+        & "$toolsDir\sccache.exe" --stop-server
+      }
 
 # --- Check Stage ---
 fmt-clippy:
   extends: .rust-linux
   stage: check
+  before_script:
+    - rustup component add clippy rustfmt
   rules:
     - if: $CI_COMMIT_TAG
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -94,6 +145,7 @@ test-linux:
 test-windows:
   extends: .rust-windows
   stage: test
+  needs: []
   rules:
     - if: $CI_COMMIT_TAG
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -122,17 +174,51 @@ build-linux:
     expire_in: 1 day
 
 build-windows:
-  extends: .rust-windows
   stage: build
+  tags:
+    - saas-linux-medium-amd64
+  image: rust:trixie
   rules:
     - if: $CI_COMMIT_TAG
+  needs:
+    - job: tag-version-check
+  variables:
+    CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+    XWIN_CACHE_DIR: "$CI_PROJECT_DIR/.xwin-cache"
+    CARGO_XWIN_VERSION: "v0.24.1"
+    CARGO_XWIN_SHA256: "207ec5436db138b60d90cb41513ce2e3db4893a9c4e25da6209790c1a2db88cf"
+  cache:
+    - key:
+        files:
+          - Cargo.lock
+        prefix: "linux-xwin-cargo"
+      paths:
+        - .cargo/registry/index/
+        - .cargo/registry/cache/
+        - .cargo/git/
+    - key: "xwin-sdk-${CARGO_XWIN_VERSION}"
+      paths:
+        - .xwin-cache/
+        - .tools-linux/
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends clang llvm lld zip
+    - |
+      if [ ! -x "$CI_PROJECT_DIR/.tools-linux/cargo-xwin" ]; then
+        mkdir -p "$CI_PROJECT_DIR/.tools-linux"
+        curl -sSfL "https://github.com/rust-cross/cargo-xwin/releases/download/${CARGO_XWIN_VERSION}/cargo-xwin-${CARGO_XWIN_VERSION}.x86_64-unknown-linux-musl.tar.gz" -o cargo-xwin.tar.gz
+        echo "${CARGO_XWIN_SHA256}  cargo-xwin.tar.gz" | sha256sum -c -
+        tar -xzf cargo-xwin.tar.gz -C "$CI_PROJECT_DIR/.tools-linux"
+        chmod +x "$CI_PROJECT_DIR/.tools-linux/cargo-xwin"
+        rm -f cargo-xwin.tar.gz
+      fi
+    - export PATH="$CI_PROJECT_DIR/.tools-linux:$PATH"
+    - rustup target add x86_64-pc-windows-msvc
   script:
-    - cargo build --release --locked --target x86_64-pc-windows-msvc
-    - New-Item -ItemType Directory -Force -Path dist\staging
-    - Copy-Item target\x86_64-pc-windows-msvc\release\recognitor.exe dist\staging\
-    - Copy-Item LICENSE dist\staging\
-    - Copy-Item README.md dist\staging\
-    - Compress-Archive -Path dist\staging\* -DestinationPath dist\recognitor-$CI_COMMIT_TAG-x86_64-pc-windows-msvc.zip
+    - cargo xwin build --release --locked --target x86_64-pc-windows-msvc
+    - mkdir -p dist/staging
+    - cp target/x86_64-pc-windows-msvc/release/recognitor.exe dist/staging/
+    - cp LICENSE README.md dist/staging/
+    - (cd dist/staging && zip -r "../recognitor-${CI_COMMIT_TAG}-x86_64-pc-windows-msvc.zip" .)
   artifacts:
     paths:
       - dist/*.zip
@@ -145,6 +231,12 @@ publish-packages:
   rules:
     - if: $CI_COMMIT_TAG
   needs:
+    - job: fmt-clippy
+    - job: tag-version-check
+    - job: test-linux
+    - job: test-windows
+    - job: secret_detection
+      optional: true
     - job: build-linux
       artifacts: true
     - job: build-windows

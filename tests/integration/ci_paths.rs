@@ -477,8 +477,8 @@ fn every_included_file_is_on_the_ci_code_paths_list() {
 #[test]
 fn the_scanner_does_not_match_its_own_needles() {
     // This file names the macros in comments and string literals only, so it has no real include call.
-    let src = fs::read_to_string(root().join("tests/ci_paths.rs")).unwrap();
-    assert_eq!(scan_source("tests/ci_paths.rs", &src).unwrap(), vec![]);
+    let src = fs::read_to_string(root().join("tests/integration/ci_paths.rs")).unwrap();
+    assert_eq!(scan_source("tests/integration/ci_paths.rs", &src).unwrap(), vec![]);
 }
 
 #[test]
