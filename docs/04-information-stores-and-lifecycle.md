@@ -181,18 +181,28 @@ For a missing block or an out-of-date block, `doctor` suggests `recognitor boots
 
 A harness whose directory is absent is not installed. `doctor` skips it, does not create the directory, and does not treat the absence as an error.
 
-The binary always starts from these four, in this order. `files` omitted means `AGENTS.md` in that directory.
+`doctor` reads the `[harness.<name>]` tables in the config file and nothing else. A missing file declares no harness. The file is not rewritten. `files` omitted or `[]` means `AGENTS.md` in that directory. A table with no `directory` is an error.
 
-| Name | Directory | Files | On Windows |
-| :--- | :--- | :--- | :--- |
-| `claude` | `~/.claude` | `CLAUDE.md` | `%USERPROFILE%\.claude\CLAUDE.md` |
-| `antigravity` | `~/.gemini` | `AGENTS.md` | `%USERPROFILE%\.gemini\AGENTS.md` |
-| `codex` | `~/.codex` | `AGENTS.md` | `%USERPROFILE%\.codex\AGENTS.md` |
-| `opencode` | `~/.config/opencode` | `AGENTS.md` | `%USERPROFILE%\.config\opencode\AGENTS.md` |
+One config that names the four common tools:
 
-`~` is the user profile (`directories::BaseDirs::home_dir()`). These are the default directories. `CODEX_HOME`, `XDG_CONFIG_HOME`, and `OPENCODE_CONFIG_DIR` are not read. OpenCode's path is the user profile's `.config\opencode`, not `%APPDATA%\opencode`. Codex also reads `AGENTS.override.md` in that directory when the file exists. The built-in names `AGENTS.md`. The override stays out of `files`, because a missing named file is reported and the override is usually absent.
+```toml
+[harness.claude]
+directory = "~/.claude"
+files = ["CLAUDE.md"]
 
-The config file can replace a directory or a file list, or add a harness. There is no `enabled` field. An installed built-in is always on the list. Skipping happens only when its directory is absent. The overlay rules are [07-interface-contracts.md §12.5](07-interface-contracts.md#125-doctor).
+[harness.antigravity]
+directory = "~/.gemini"
+
+[harness.codex]
+directory = "~/.codex"
+
+[harness.opencode]
+directory = "~/.config/opencode"
+```
+
+`~` is the user profile (`directories::BaseDirs::home_dir()`). `CODEX_HOME`, `XDG_CONFIG_HOME`, and `OPENCODE_CONFIG_DIR` are not read. OpenCode's usual directory is the user profile's `.config\opencode`, not `%APPDATA%\opencode`. Codex also reads `AGENTS.override.md` in that directory when the file exists. Leave that name out of `files`: a missing named file is reported, and the override is usually absent.
+
+There is no `enabled` field. A harness whose directory is absent is skipped. The table rules are [07-interface-contracts.md §12.5](07-interface-contracts.md#125-doctor).
 
 ---
 

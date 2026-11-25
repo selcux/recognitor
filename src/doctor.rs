@@ -20,7 +20,7 @@ const START_SUFFIX: &[u8] = b" -->";
 const END_MARKER: &[u8] = b"<!-- recognitor bootstrap end -->";
 const DEFAULT_FILES: &[&str] = &["AGENTS.md"];
 
-/// One harness after the built-ins and the config overlay are merged.
+/// One harness declared in the config file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Harness {
     /// Canonical name the CLI prints and that `bootstrap write` will take.
@@ -126,32 +126,6 @@ impl DoctorReport {
     }
 }
 
-/// Built-in harnesses, in the order the note lists them.
-fn builtins() -> Vec<HarnessDraft> {
-    vec![
-        HarnessDraft {
-            name: "claude".to_string(),
-            directory: "~/.claude".to_string(),
-            files: Some(vec!["CLAUDE.md".to_string()]),
-        },
-        HarnessDraft {
-            name: "antigravity".to_string(),
-            directory: "~/.gemini".to_string(),
-            files: None,
-        },
-        HarnessDraft {
-            name: "codex".to_string(),
-            directory: "~/.codex".to_string(),
-            files: None,
-        },
-        HarnessDraft {
-            name: "opencode".to_string(),
-            directory: "~/.config/opencode".to_string(),
-            files: None,
-        },
-    ]
-}
-
 #[derive(Clone)]
 struct HarnessDraft {
     name: String,
@@ -160,8 +134,8 @@ struct HarnessDraft {
     files: Option<Vec<String>>,
 }
 
-/// Parses the harness table from the config file and returns the merged list. A missing file is an empty document; the
-/// built-ins still exist. A bad table is [`Error::Config`].
+/// Parses `[harness.*]` from the config file. A missing file is an empty document: no harness is declared.
+/// A bad table is [`Error::Config`].
 pub fn load_harnesses(config_path: &Path) -> Result<Vec<Harness>> {
     load_harnesses_with_home(config_path, home_dir()?)
 }
@@ -196,15 +170,14 @@ fn bad_config(path: &Path, message: impl Into<String>) -> Error {
 }
 
 fn merge_harnesses(config_path: &Path, doc: &DocumentMut) -> Result<Vec<HarnessDraft>> {
-    let mut drafts = builtins();
     let Some(item) = doc.get("harness") else {
-        return Ok(drafts);
+        return Ok(Vec::new());
     };
     let Some(table) = item.as_table() else {
         return Err(bad_config(config_path, "[harness] must be a table of harnesses"));
     };
 
-    // Detect two keys that differ only by case before overlaying.
+    // Detect two keys that differ only by case before reading the entries.
     let mut seen_folded: Vec<(String, String)> = Vec::new();
     for (key, _) in table.iter() {
         let folded = key.to_ascii_lowercase();
@@ -217,6 +190,7 @@ fn merge_harnesses(config_path: &Path, doc: &DocumentMut) -> Result<Vec<HarnessD
         seen_folded.push((folded, key.to_string()));
     }
 
+    let mut drafts = Vec::new();
     for (key, item) in table.iter() {
         let Some(entry) = item.as_table() else {
             return Err(bad_config(config_path, format!("[harness.{key}] must be a table")));
@@ -231,23 +205,14 @@ fn merge_harnesses(config_path: &Path, doc: &DocumentMut) -> Result<Vec<HarnessD
             ));
         }
         let overlay = parse_overlay(config_path, key, entry)?;
-        if let Some(existing) = drafts.iter_mut().find(|d| d.name == folded) {
-            if let Some(dir) = overlay.directory {
-                existing.directory = dir;
-            }
-            if let Some(files) = overlay.files {
-                existing.files = Some(files);
-            }
-        } else {
-            let directory = overlay
-                .directory
-                .ok_or_else(|| bad_config(config_path, format!("[harness.{key}] needs a directory")))?;
-            drafts.push(HarnessDraft {
-                name: folded,
-                directory,
-                files: overlay.files,
-            });
-        }
+        let directory = overlay
+            .directory
+            .ok_or_else(|| bad_config(config_path, format!("[harness.{key}] needs a directory")))?;
+        drafts.push(HarnessDraft {
+            name: folded,
+            directory,
+            files: overlay.files,
+        });
     }
     Ok(drafts)
 }
@@ -628,21 +593,14 @@ mod tests {
     }
 
     #[test]
-    fn builtins_alone_when_the_config_is_missing() {
+    fn a_missing_config_declares_no_harness() {
         let t = Temp::new();
         let list = load_harnesses_with_home(&t.config(), t.home()).unwrap();
-        assert_eq!(
-            list.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(),
-            ["claude", "antigravity", "codex", "opencode"]
-        );
-        assert_eq!(list[0].files, ["CLAUDE.md"]);
-        assert_eq!(list[1].files, ["AGENTS.md"]);
-        assert_eq!(list[0].directory, t.home().join(".claude"));
-        assert_eq!(list[3].directory, t.home().join(".config").join("opencode"));
+        assert!(list.is_empty());
     }
 
     #[test]
-    fn directory_only_overlay_keeps_claude_md() {
+    fn omitted_files_means_agents_md() {
         let t = Temp::new();
         let dir = abs(&t, "my-claude");
         t.write_config(&format!(
@@ -650,9 +608,10 @@ mod tests {
             dir.replace('\\', "/")
         ));
         let list = load_harnesses_with_home(&t.config(), t.home()).unwrap();
-        let claude = list.iter().find(|h| h.name == "claude").unwrap();
-        assert_eq!(claude.files, ["CLAUDE.md"]);
-        assert_eq!(claude.directory, PathBuf::from(&dir));
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "claude");
+        assert_eq!(list[0].files, ["AGENTS.md"]);
+        assert_eq!(list[0].directory, PathBuf::from(&dir));
     }
 
     #[test]
@@ -669,19 +628,20 @@ mod tests {
     }
 
     #[test]
-    fn a_new_name_follows_the_four_builtins() {
+    fn order_is_the_order_in_the_file() {
         let t = Temp::new();
         let dir = abs(&t, "tool");
+        let d = dir.replace('\\', "/");
         t.write_config(&format!(
-            "[harness.my-tool]\ndirectory = \"{}\"\n",
-            dir.replace('\\', "/")
+            "[harness.my-tool]\ndirectory = \"{d}\"\n[harness.claude]\ndirectory = \"{d}\"\nfiles = [\"CLAUDE.md\"]\n"
         ));
         let list = load_harnesses_with_home(&t.config(), t.home()).unwrap();
         assert_eq!(
             list.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(),
-            ["claude", "antigravity", "codex", "opencode", "my-tool"]
+            ["my-tool", "claude"]
         );
-        assert_eq!(list[4].files, ["AGENTS.md"]);
+        assert_eq!(list[0].files, ["AGENTS.md"]);
+        assert_eq!(list[1].files, ["CLAUDE.md"]);
     }
 
     #[test]
@@ -693,6 +653,7 @@ mod tests {
             dir.replace('\\', "/")
         ));
         let list = load_harnesses_with_home(&t.config(), t.home()).unwrap();
+        assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "claude");
         assert_eq!(list[0].directory, PathBuf::from(&dir));
     }

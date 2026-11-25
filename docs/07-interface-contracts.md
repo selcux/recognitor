@@ -810,7 +810,7 @@ recognitor bootstrap write antigravity, codex
 | `×` | missing |
 
 - **Suggestion:** after the list, when any file is `-` or `↑`, a `---` line and one command: `recognitor bootstrap write <name>[, <name>...]`. Names are those harnesses, once each, in the order they first appear. One name has no comma. No such file means no `---` and no command. `?` and `×` are never listed: a one-marker file and a missing file stay as they are until someone fixes them by hand. `bootstrap write` and `bootstrap remove` are not commands in this version. The line names the fix.
-- **Order:** the four built-ins, then names the file adds, in file order. Files of one harness follow its `files` list.
+- **Order:** the order of the tables in the file. Files of one harness follow its `files` list.
 - **Not installed:** a harness whose directory is absent is skipped. Nothing is printed for it, and the directory is not created. When every harness is skipped, stdout and stderr stay empty and the exit code is 0.
 - **Vault:** after the table parses and every present harness directory is a directory, `doctor` compiles the payload the same way `recognitor bootstrap` does, including when every harness was skipped. No vault is a usage error (§2.1). A missing `bootstrap/index.md` is the same error as `bootstrap`.
 - **Streams:** the report goes to stdout, and stderr stays empty. A bad table, a path that exists and is not a directory, or an instruction path that exists and is not a file goes to stderr as `error:`, with nothing on stdout and no partial report.
@@ -822,7 +822,7 @@ recognitor bootstrap write antigravity, codex
 | 1 | Any file is not `up to date`, or the table or a path shape is wrong, or the command failed (§2.1) |
 | 2 | Bad arguments, including no vault (§2.1) |
 
-**Harness tables.** A missing config file is an empty document. The four built-ins of doc 04 §5.3 exist anyway. The file is not rewritten to materialize them.
+**Harness tables.** Harnesses are the `[harness.<name>]` tables in the config file. A missing file is an empty document: no harness is checked. The file is not rewritten.
 
 ```toml
 [harness.claude]
@@ -833,9 +833,7 @@ files = ["CLAUDE.md"]
 directory = "D:/apps/my-tool"
 ```
 
-- **Overlay:** the same name, compared case-insensitively, replaces only the fields that are present. `[harness.claude]` with only `directory` keeps `CLAUDE.md`. The report uses the canonical spelling: `Claude` selects `claude`.
-- **A new name** adds a harness, after the four, in file order. Its `directory` is required. The canonical name is the key folded to ASCII lowercase: a letter, then letters, digits, and hyphens.
-- **Two keys that differ only by case** are an error.
+- **Name:** the key folded to ASCII lowercase. A letter, then letters, digits, and hyphens. The report uses that spelling: `Claude` is `claude`. `directory` is required. Two keys that differ only by case are an error.
 - **`files`:** optional. Omitted or `[]` means one file, `AGENTS.md`. A non-empty array is the whole list. Any field other than `directory` and `files` is an error, so `file` cannot fall through to `AGENTS.md`.
 - **`directory`:** a home-relative path or an absolute path. `~/.claude` and `~\.claude` are the same path. `~` is `directories::BaseDirs::home_dir()` (`%USERPROFILE%` on Windows, `$HOME` on Unix). `~` alone, `~` plus a username, an empty directory, and a path with no `~` and no drive or root (`.claude`, `bin\my_harness`) are errors. Recognitor does not guess from the current folder. An absolute path is used as given. A `~` path with no user profile is an error. An absolute path does not need one. `CODEX_HOME`, `XDG_CONFIG_HOME`, and `OPENCODE_CONFIG_DIR` are not read.
 - **Each `files` entry** is a relative path inside the harness directory. Absolute, empty, or a `..` component is an error. A repeated path in one harness is an error: `/` and `\` are the same path, a `.` component is ignored, and case counts as written.

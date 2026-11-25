@@ -1423,7 +1423,12 @@ fn cli_rebuild_then_sync() {
     );
     assert!(sync.contains("warning: non-ASCII name"), "{sync}");
 
-    let out = Command::new(bin).arg("sync").output().unwrap();
+    let out = Command::new(bin)
+        .arg("sync")
+        .env_remove("RECOGNITOR_VAULT")
+        .env("RECOGNITOR_CONFIG", v.root.join("missing_config.toml"))
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(2), "missing --vault is a usage error");
 }
 

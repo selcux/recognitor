@@ -40,36 +40,17 @@ impl Scratch {
             home: base.join("home"),
         };
         fs::create_dir_all(&s.home).unwrap();
-        // Point every built-in at an absent directory under the scratch home, so the real profile is never read.
-        s.write_absent_builtins();
+        // No harness table. Doctor reads only what this file declares, so the real profile is never touched.
+        fs::write(&s.config, "").unwrap();
         s
-    }
-
-    fn write_absent_builtins(&self) {
-        let toml = format!(
-            r#"[harness.claude]
-directory = "{0}/.claude"
-
-[harness.antigravity]
-directory = "{0}/.gemini"
-
-[harness.codex]
-directory = "{0}/.codex"
-
-[harness.opencode]
-directory = "{0}/.config/opencode"
-"#,
-            self.home.display().to_string().replace('\\', "/")
-        );
-        fs::write(&self.config, toml).unwrap();
     }
 
     fn harness_dir(&self, name: &str) -> PathBuf {
         self.base.join("harnesses").join(name)
     }
 
-    /// Only one installed harness: overlays a built-in onto `dir`, others stay absent under the scratch home.
-    fn install_builtin(&self, name: &str, dir: &Path, files: Option<&[&str]>) {
+    /// Writes one harness table. `files` omitted means the command's default, `AGENTS.md`.
+    fn install(&self, name: &str, dir: &Path, files: Option<&[&str]>) {
         let dir_s = dir.display().to_string().replace('\\', "/");
         let files_line = match files {
             None => String::new(),
@@ -79,28 +60,11 @@ directory = "{0}/.config/opencode"
                 format!("files = [{}]\n", listed.join(", "))
             }
         };
-        let home = self.home.display().to_string().replace('\\', "/");
-        let mut parts = String::new();
-        for builtin in ["claude", "antigravity", "codex", "opencode"] {
-            let d = if builtin == name {
-                dir_s.clone()
-            } else {
-                let rest = match builtin {
-                    "claude" => ".claude",
-                    "antigravity" => ".gemini",
-                    "codex" => ".codex",
-                    "opencode" => ".config/opencode",
-                    _ => unreachable!(),
-                };
-                format!("{home}/{rest}")
-            };
-            parts.push_str(&format!("[harness.{builtin}]\ndirectory = \"{d}\"\n"));
-            if builtin == name {
-                parts.push_str(&files_line);
-            }
-            parts.push('\n');
-        }
-        fs::write(&self.config, parts).unwrap();
+        fs::write(
+            &self.config,
+            format!("[harness.{name}]\ndirectory = \"{dir_s}\"\n{files_line}"),
+        )
+        .unwrap();
     }
 
     fn ensure_index(&self) {
@@ -167,13 +131,10 @@ fn block_absent_suggests_write_and_exits_1() {
     let dir = s.harness_dir("claude");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("CLAUDE.md"), "# Claude\n").unwrap();
-    s.install_builtin("claude", &dir, Some(&["CLAUDE.md"]));
+    s.install("claude", &dir, Some(&["CLAUDE.md"]));
     let out = s.run(&["doctor"]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    assert_eq!(
-        stdout(&out),
-        "claude -\n---\nrecognitor bootstrap write claude\n"
-    );
+    assert_eq!(stdout(&out), "claude -\n---\nrecognitor bootstrap write claude\n");
     assert_eq!(stderr(&out), "");
 }
 
@@ -184,7 +145,7 @@ fn up_to_date_exits_0() {
     fs::create_dir_all(&dir).unwrap();
     let payload = s.payload();
     s.write_block(&dir.join("CLAUDE.md"), &payload, None);
-    s.install_builtin("claude", &dir, Some(&["CLAUDE.md"]));
+    s.install("claude", &dir, Some(&["CLAUDE.md"]));
     let out = s.run(&["doctor"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(stdout(&out), "claude +\n");
@@ -198,7 +159,7 @@ fn out_of_date_from_wrong_stamp_suggests_write() {
     let payload = s.payload();
     let wrong = "0".repeat(64);
     s.write_block(&dir.join("CLAUDE.md"), &payload, Some(&wrong));
-    s.install_builtin("claude", &dir, Some(&["CLAUDE.md"]));
+    s.install("claude", &dir, Some(&["CLAUDE.md"]));
     let out = s.run(&["doctor"]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert_eq!(
@@ -217,7 +178,7 @@ fn crlf_body_is_out_of_date_against_lf_payload() {
     let hash = sha256_hex(crlf.as_bytes());
     let file = format!("<!-- recognitor bootstrap sha={hash} -->\r\n{crlf}<!-- recognitor bootstrap end -->\r\n");
     fs::write(dir.join("CLAUDE.md"), file).unwrap();
-    s.install_builtin("claude", &dir, Some(&["CLAUDE.md"]));
+    s.install("claude", &dir, Some(&["CLAUDE.md"]));
     let out = s.run(&["doctor"]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert!(stdout(&out).starts_with("claude \u{2191}\n"), "{}", stdout(&out));
@@ -233,20 +194,11 @@ fn misconfigured_and_missing_get_no_suggestion_and_do_not_stop_the_rest() {
     fs::write(a.join("AGENTS.md"), "<!-- recognitor bootstrap end -->\n").unwrap();
     // b has the directory but no AGENTS.md
     let toml = format!(
-        r#"[harness.claude]
-directory = "{home}/.claude"
-[harness.antigravity]
-directory = "{home}/.gemini"
-[harness.codex]
-directory = "{home}/.codex"
-[harness.opencode]
-directory = "{home}/.config/opencode"
-[harness.tool-a]
+        r#"[harness.tool-a]
 directory = "{a}"
 [harness.tool-b]
 directory = "{b}"
 "#,
-        home = s.home.display().to_string().replace('\\', "/"),
         a = a.display().to_string().replace('\\', "/"),
         b = b.display().to_string().replace('\\', "/"),
     );
@@ -261,7 +213,7 @@ fn directory_that_is_a_file_exits_1_with_empty_stdout() {
     let s = Scratch::new();
     let path = s.base.join("not-a-dir");
     fs::write(&path, "file").unwrap();
-    s.install_builtin("claude", &path, Some(&["CLAUDE.md"]));
+    s.install("claude", &path, Some(&["CLAUDE.md"]));
     let out = s.run(&["doctor"]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert_eq!(stdout(&out), "");
@@ -273,7 +225,7 @@ fn instruction_path_that_is_a_directory_exits_1_with_empty_stdout() {
     let s = Scratch::new();
     let dir = s.harness_dir("claude");
     fs::create_dir_all(dir.join("CLAUDE.md")).unwrap();
-    s.install_builtin("claude", &dir, Some(&["CLAUDE.md"]));
+    s.install("claude", &dir, Some(&["CLAUDE.md"]));
     let out = s.run(&["doctor"]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert_eq!(stdout(&out), "");
@@ -310,6 +262,7 @@ fn extra_arguments_exit_2() {
 #[test]
 fn config_get_and_set_ignore_harness_tables() {
     let s = Scratch::new();
+    fs::write(&s.config, "[harness.claude]\ndirectory = \"~/.claude\"\n").unwrap();
     let before = fs::read_to_string(&s.config).unwrap();
     assert!(before.contains("[harness.claude]"));
 
