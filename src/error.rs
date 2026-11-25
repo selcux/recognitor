@@ -29,6 +29,15 @@ pub enum Error {
     ConfigNotSet(String),
     /// The config file cannot be read as TOML or holds the wrong kind of value. It is never overwritten.
     Config { path: PathBuf, message: String },
+    /// `bootstrap write` named a harness that the config file does not declare. Holds the name as given and the
+    /// harnesses that exist, in config order.
+    UnknownHarness { name: String, harnesses: Vec<String> },
+    /// A harness instruction file `bootstrap write` cannot edit: missing, not a file, or a block with one marker
+    /// line. Nothing was changed.
+    InstructionFile { path: PathBuf, message: String },
+    /// The compiled bootstrap payload contains a marker line, so a block built from it could not be read back.
+    /// Nothing was changed.
+    PayloadHasMarker,
     /// A search query with no words in it (doc 07 §4, "Query text").
     EmptyQuery,
     /// A note named in a tool call matches no note (doc 07 §6.3). Holds the name as given.
@@ -76,7 +85,10 @@ impl Error {
     pub fn is_usage(&self) -> bool {
         matches!(
             self,
-            Error::NoVault { .. } | Error::UnknownConfigKey(_) | Error::InvalidConfigValue { .. }
+            Error::NoVault { .. }
+                | Error::UnknownConfigKey(_)
+                | Error::InvalidConfigValue { .. }
+                | Error::UnknownHarness { .. }
         )
     }
 
@@ -111,6 +123,18 @@ impl fmt::Display for Error {
             Error::InvalidConfigValue { key, reason } => write!(f, "{key}: {reason}"),
             Error::ConfigNotSet(key) => write!(f, "{key} is not set"),
             Error::Config { path, message } => write!(f, "{}: {message}", path.display()),
+            Error::UnknownHarness { name, harnesses } => {
+                write!(f, "no harness named {name:?}")?;
+                if harnesses.is_empty() {
+                    write!(f, "; the config file declares no harnesses")
+                } else {
+                    write!(f, "; the harnesses are: {}", harnesses.join(", "))
+                }
+            }
+            Error::InstructionFile { path, message } => write!(f, "{}: {message}", path.display()),
+            Error::PayloadHasMarker => {
+                write!(f, "the bootstrap payload contains a marker line; no file was changed")
+            }
             // Doc 07 §4 "Query text": a query with no words left is refused with an error that says so.
             Error::EmptyQuery => write!(f, "the search query is empty: give at least one word to search for"),
             Error::NoBootstrap => write!(f, "bootstrap/index.md not found. Run `recognitor lint`."),
@@ -181,6 +205,9 @@ impl std::error::Error for Error {
             | Error::InvalidConfigValue { .. }
             | Error::ConfigNotSet(_)
             | Error::Config { .. }
+            | Error::UnknownHarness { .. }
+            | Error::InstructionFile { .. }
+            | Error::PayloadHasMarker
             | Error::ForeignDatabase(_)
             | Error::VaultMismatch { .. } => None,
         }

@@ -5,9 +5,9 @@
 
 //! `recognitor` CLI: a thin layer over the library. Commands are defined in doc 07 §12.
 //!
-//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `move`, `relink`, `lint`, `doctor`,
-//! `ghosts`, `trash empty`, `mcp` and `config get/set`. The vault comes from `--vault`, else `RECOGNITOR_VAULT`, else
-//! `vault.path` in the config file (doc 07 §12, "Which vault").
+//! Built so far: `sync`, `rebuild`, `search`, `context`, `read`, `bootstrap`, `bootstrap write`, `move`, `relink`,
+//! `lint`, `doctor`, `ghosts`, `trash empty`, `mcp` and `config get/set`. The vault comes from `--vault`, else
+//! `RECOGNITOR_VAULT`, else `vault.path` in the config file (doc 07 §12, "Which vault").
 //!
 //! `move` is the one command that talks to the user (doc 07 §6.1): it moves the note, prints the broken links, asks which
 //! linking notes to relink, and relinks them. The write lock is never held while it waits for the answer: the move
@@ -30,6 +30,7 @@ const USAGE: &str = "usage: recognitor sync|rebuild [--report] [--vault <path>]
        recognitor context <note> [--vault <path>] [--page <n>]
        recognitor read <note> [--section <heading>] [--query <text>] [--vault <path>]
        recognitor bootstrap [--list] [--vault <path>]
+       recognitor bootstrap write <harness>... [--vault <path>]
        recognitor move <note> <new_path> [--relink all|none|ask] [--vault <path>]
        recognitor relink <old> <new> <note>... [--vault <path>]
        recognitor lint [--strict] [--vault <path>]
@@ -47,6 +48,8 @@ commands:
   context <note>            the links around one note: an id, a path or a link name
   read <note>               one note under a header line with its checksum; --section reads one part, a long note is cut
   bootstrap                 print the bootstrap payload (the notes linked from bootstrap/index.md)
+  bootstrap write <harness>...
+                            insert or replace the bootstrap block in each installed harness instruction file
   move <note> <new_path>    move or rename a note, then ask which linking notes to relink; new_path is from the vault root
   relink <old> <new> <note>...
                             rewrite the links to a moved note in the notes given; old is its id before the move
@@ -109,6 +112,9 @@ enum Command {
     },
     Bootstrap {
         list: bool,
+    },
+    BootstrapWrite {
+        harnesses: Vec<String>,
     },
     Move {
         note: String,
@@ -198,7 +204,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
     if relink_mode.is_some() && name != "move" {
         return Err("--relink belongs to move".to_string());
     }
-    if list && name != "bootstrap" {
+    if list && !(name == "bootstrap" && rest.is_empty()) {
         return Err("--list belongs to bootstrap".to_string());
     }
     if strict && name != "lint" {
@@ -225,6 +231,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<Args>, String
             query,
         },
         ("bootstrap", []) => Command::Bootstrap { list },
+        ("bootstrap", [sub, harnesses @ ..]) if sub == "write" && !harnesses.is_empty() => Command::BootstrapWrite {
+            harnesses: harnesses.to_vec(),
+        },
+        ("bootstrap", [sub, ..]) if sub == "write" => {
+            return Err("bootstrap write needs at least one harness".to_string());
+        }
         ("move", [note, new_path]) => Command::Move {
             note: note.clone(),
             new_path: new_path.clone(),
@@ -292,6 +304,7 @@ fn run(args: &Args) -> recognitor::Result<String> {
         Command::Config(cmd) => return run_config(cmd),
         Command::Mcp => return run_mcp(args),
         Command::TrashEmpty => return run_trash_empty(args),
+        Command::BootstrapWrite { harnesses } => return run_bootstrap_write(args, harnesses),
         other => other,
     };
     let (mut index, config_file) = open_index(args)?;
@@ -331,6 +344,7 @@ fn run(args: &Args) -> recognitor::Result<String> {
             args.vault.as_deref(),
         )),
         Command::Config(cmd) => run_config(cmd),
+        Command::BootstrapWrite { .. } => Ok(String::new()),
         // `main` runs `lint` and `doctor` itself, because their exit codes depend on what they find.
         Command::Lint { .. } | Command::Doctor => Ok(String::new()),
         Command::Mcp => run_mcp(args),
@@ -367,13 +381,37 @@ fn run_lint(args: &Args, strict: bool) -> recognitor::Result<(String, ExitCode)>
     Ok((report.render(), code))
 }
 
+/// `recognitor bootstrap write <harness>...`: parse the harness table and read every named file first, then compile
+/// the payload once and edit the files that differ. A missing file or a one-marker file stops the command before any
+/// edit; a name that is not in the config is a bad argument.
+///
+/// If every named harness is skipped because its directory is absent, nothing is read from the vault and the
+/// command exits 0 with no output.
+fn run_bootstrap_write(args: &Args, names: &[String]) -> recognitor::Result<String> {
+    let config_file = config::config_path()?;
+    let harnesses = recognitor::harness::load_harnesses(&config_file)?;
+    let selected = recognitor::bootstrap_write::select(&harnesses, names)?;
+    let installed = recognitor::harness::installed_files(&selected)?;
+    let targets = recognitor::bootstrap_write::read_targets(&installed)?;
+    if targets.is_empty() {
+        return Ok(String::new());
+    }
+    let (mut index, _) = open_index(args)?;
+    let max_tokens = config::bootstrap_max_tokens(&config_file)?.unwrap_or(DEFAULT_MAX_TOKENS);
+    let written = recognitor::bootstrap_write::write(&mut index, &targets, max_tokens)?;
+    Ok(written
+        .iter()
+        .map(|path| format!("wrote: {}\n", path.display()))
+        .collect())
+}
+
 /// `recognitor doctor`: parse the harness table and stat directories first (so a bad table or a non-directory never
 /// sweeps), then compile the payload and classify each installed file. Exit 1 when any file is not up to date
 /// (provisional; see `doctor` module).
 fn run_doctor(args: &Args) -> recognitor::Result<(String, ExitCode)> {
     let config_file = config::config_path()?;
-    let harnesses = recognitor::doctor::load_harnesses(&config_file)?;
-    let installed = recognitor::doctor::installed_files(&harnesses)?;
+    let harnesses = recognitor::harness::load_harnesses(&config_file)?;
+    let installed = recognitor::harness::installed_files(&harnesses)?;
     let (mut index, _) = open_index(args)?;
     let max_tokens = config::bootstrap_max_tokens(&config_file)?.unwrap_or(DEFAULT_MAX_TOKENS);
     let report = recognitor::doctor::doctor(&mut index, &installed, max_tokens)?;

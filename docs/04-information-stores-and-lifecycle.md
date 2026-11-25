@@ -155,7 +155,7 @@ A rule stored in both places drifts, and the two copies eventually conflict.
 
 ### 5.3 The bootstrap block
 
-`recognitor doctor` is the read-only check that each installed harness instruction file holds the current bootstrap payload. The check is that block and nothing else. It writes no file. The report lines and the exit codes are [07-interface-contracts.md §12.5](07-interface-contracts.md#125-doctor).
+`recognitor doctor` is the read-only check that each installed harness instruction file holds the current bootstrap payload. `recognitor bootstrap write <harness>...` is the fix: it inserts the block, or replaces it when the bytes differ. The report lines and exit codes are [07-interface-contracts.md §12.5](07-interface-contracts.md#125-doctor); the write command and its checks are [§12.6](07-interface-contracts.md#126-bootstrap-write-harness) there.
 
 The block is two lines around the text `recognitor bootstrap` prints. That text is the payload of §2.2, and the budget warning when the estimate is over `bootstrap.max_tokens`.
 
@@ -165,7 +165,7 @@ The block is two lines around the text `recognitor bootstrap` prints. That text 
 <!-- recognitor bootstrap end -->
 ```
 
-The sha is the SHA-256 of the bytes between those lines, as 64 lowercase hex digits. `doctor` hashes those bytes and compares them with the current payload. A stamp that disagrees with the bytes, or bytes that disagree with the payload, means the block is out of date.
+The sha is the SHA-256 of the bytes between those lines, as 64 lowercase hex digits. `doctor` and `write` hash those bytes and compare them with the current payload. A stamp that disagrees with the bytes, or bytes that disagree with the payload, means the block is out of date.
 
 A marker is a whole line. One trailing carriage return is stripped before the line is recognized. No other whitespace is ignored.
 
@@ -177,11 +177,11 @@ A marker is a whole line. One trailing carriage return is stripped before the li
 - **Any other arrangement** (one of the two lines, the end before the start, or more than one of either): `misconfigured`.
 - **The named file is not on disk:** `missing`.
 
-For a missing block or an out-of-date block, `doctor` suggests `recognitor bootstrap write <harness>`. A misconfigured file is reported as misconfigured, with no suggestion. The file stays as it is until someone fixes it by hand. `doctor` still lists the other harnesses. A missing file is reported the same way: listed, no suggestion, and the other files still follow.
+For a missing block or an out-of-date block, `doctor` suggests `recognitor bootstrap write <harness>`, with the harness names separated by spaces so the printed command runs. A misconfigured file is reported as misconfigured, with no suggestion. The file stays as it is until someone fixes it by hand. `doctor` still lists the other harnesses. A missing file is reported the same way: listed, no suggestion, and the other files still follow.
 
-A harness whose directory is absent is not installed. `doctor` skips it, does not create the directory, and does not treat the absence as an error.
+A harness whose directory is absent is not installed. `doctor` and `write` skip it, do not create the directory, and do not treat the absence as an error.
 
-`doctor` reads the `[harness.<name>]` tables in the config file and nothing else. A missing file declares no harness. The file is not rewritten. `files` omitted or `[]` means `AGENTS.md` in that directory. A table with no `directory` is an error.
+`doctor` and `write` read the `[harness.<name>]` tables in the config file and nothing else. A missing file declares no harness. The file is not rewritten. `files` omitted or `[]` means `AGENTS.md` in that directory. A table with no `directory` is an error.
 
 One config that names the four common tools:
 
@@ -200,9 +200,13 @@ directory = "~/.codex"
 directory = "~/.config/opencode"
 ```
 
-`~` is the user profile (`directories::BaseDirs::home_dir()`). `CODEX_HOME`, `XDG_CONFIG_HOME`, and `OPENCODE_CONFIG_DIR` are not read. OpenCode's usual directory is the user profile's `.config\opencode`, not `%APPDATA%\opencode`. Codex also reads `AGENTS.override.md` in that directory when the file exists. Leave that name out of `files`: a missing named file is reported, and the override is usually absent.
+`~` is the user profile (`directories::BaseDirs::home_dir()`). `CODEX_HOME`, `XDG_CONFIG_HOME`, and `OPENCODE_CONFIG_DIR` are not read. OpenCode's usual directory is the user profile's `.config\opencode`, not `%APPDATA%\opencode`. Codex also reads `AGENTS.override.md` in that directory when the file exists. Leave that name out of `files`: a missing named file is an error, and the override is usually absent.
 
 There is no `enabled` field. A harness whose directory is absent is skipped. The table rules are [07-interface-contracts.md §12.5](07-interface-contracts.md#125-doctor).
+
+`bootstrap write` checks every named file before it edits any. An unknown harness name, a harness directory that exists and is not a directory, a missing instruction file, and a file with one marker line are errors, and no file is changed. A file with no block gets the block appended. A file whose block is out of date gets the block replaced, and the text around it keeps its bytes. A file that is already up to date is left as it is. A payload that itself contains a marker line is refused, because the block it would build could not be read back.
+
+`write` reports each modified file as `wrote: <path>` and prints nothing when nothing changed. When every named harness is skipped, it changes nothing, exits 0, and does not open the vault.
 
 ---
 

@@ -147,7 +147,7 @@ Resolved in favor of lightweight **Structural Linting** plus optional **vault-wi
 
 Resolved in [07-interface-contracts.md](07-interface-contracts.md): a stateless server, MCP tools for every-session agent work, and a CLI limited to what a human cannot do by hand.
 - **MCP:** `load_bootstrap`, `load_namespace`, `search`, `context`, `read_note`, `write_note`, `edit_note`, `move_note`, `relink`, `delete_note`.
-- **CLI:** `bootstrap [--list]`, `search`, `context`, `read`, `move`, `relink`, `ghosts [<link>]`, `lint [--strict]`, `doctor`, `trash empty`, `sync`, `rebuild`, `config get/set`. No write or edit commands for notes: humans edit the files directly. `doctor` only reads harness instruction files ([07-interface-contracts.md §12.5](07-interface-contracts.md#125-doctor)).
+- **CLI:** `bootstrap [--list]`, `bootstrap write <harness>...`, `search`, `context`, `read`, `move`, `relink`, `ghosts [<link>]`, `lint [--strict]`, `doctor`, `trash empty`, `sync`, `rebuild`, `config get/set`. No write or edit commands for notes: humans edit the files directly. `doctor` only reads harness instruction files; `bootstrap write` is the one command that edits them ([07-interface-contracts.md §12.6](07-interface-contracts.md#126-bootstrap-write-harness)).
 - **Rejected:** a raw-SQL `query` command, a `--json` output flag, and `ghosts` as an MCP tool.
 - **Order (DR1-15):** every schema change must now be justified by a contract in doc 07.
 
@@ -162,7 +162,7 @@ Resolved in favor of **three stores separated by location** (bootstrap, knowledg
 - **Global rules only:** everything in the bootstrap applies in every project. Project rules stay in the repository's own instruction files (`AGENTS.md`, `CLAUDE.md`, Cursor rules), so each rule has one home.
 - **Namespace entry:** every namespace has an `index.md`; `load_namespace(ns)` returns it and keeps no state ([07-interface-contracts.md §3](07-interface-contracts.md#3-load_namespacens)).
 - **Same tables:** bootstrap notes share the schema but get no full-text or vector rows, so search cannot return them.
-- **Session start:** an instruction in the harness file, or a session-start hook running `recognitor bootstrap` where the harness supports one. `recognitor doctor` checks that each installed harness file still holds that payload ([04-information-stores-and-lifecycle.md §5.3](04-information-stores-and-lifecycle.md#53-the-bootstrap-block)).
+- **Session start:** an instruction in the harness file, or a session-start hook running `recognitor bootstrap` where the harness supports one. `recognitor doctor` checks that each installed harness file still holds that payload, and `recognitor bootstrap write <harness>...` puts it there ([04-information-stores-and-lifecycle.md §5.3](04-information-stores-and-lifecycle.md#53-the-bootstrap-block)).
 - **Rejected: a separate database table for the bootstrap.** Same Markdown means the same parser, link resolver, and lint; leaving bootstrap notes out of the search indexes gives the same isolation.
 - **Rejected: per-namespace `rules/` folders.** Project rules already live in the project repository's instruction files.
 

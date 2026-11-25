@@ -248,6 +248,7 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
 | `relink` | Fix links after a move made outside Recognitor | ✅ |
 | `lint [--strict]` | Report case twins, missing entry points, type schema misses, and other problems. `--strict` fails on warnings too, for a pre-commit hook or CI | ✅ |
 | `doctor` | Check that each installed harness instruction file holds the current bootstrap payload | ✅ |
+| `bootstrap write <harness>...` | Insert or replace the bootstrap block in each installed harness instruction file | ✅ |
 | `mcp` | Serve the tools to one assistant session over stdio | ✅ |
 | `config get/set` | Read and change the config file | ✅ |
 | `ghosts [<link>]` | List links to missing notes, with a hint where a moved note went. With a link: the notes that hold it, and the `relink` command when there is a hint | ✅ |
@@ -295,6 +296,10 @@ relink(old: "ideas/Caching", new: "design/b/Caching", notes: ["ops/Runbook"])
    Session start: call `load_namespace('<namespace name>')`.
    ```
 
+   Once your harness table names those files, `recognitor bootstrap write claude codex` puts the current payload
+   between the marker lines, and `recognitor doctor` checks that it still matches. Use the harness names from your
+   own `[harness.<name>]` tables.
+
 On Windows, a running server keeps the binary open. Disconnect the server in your client first, then reinstall.
 
 The CLI shows the same text the assistant gets:
@@ -308,6 +313,7 @@ recognitor move ideas/Caching design/b/Caching
 recognitor relink ideas/Caching design/b/Caching ops/Runbook
 recognitor lint --strict
 recognitor doctor
+recognitor bootstrap write claude codex
 recognitor ghosts
 ```
 
@@ -319,7 +325,7 @@ recognitor ghosts
 | :--- | :--- |
 | Read tools and the MCP server | ✅ Built and tested |
 | Write tools | ✅ Built and tested |
-| CLI `lint`, `doctor`, `ghosts` | ✅ Built and tested |
+| CLI `lint`, `doctor`, `bootstrap write`, `ghosts` | ✅ Built and tested |
 | CLI `trash empty` | ✅ Built and tested |
 | Search ranking | ✅ Verified at 98% recall@5 with the retrieval benchmark |
 | 100× scale & latency | ✅ Verified: 10k notes, 100k observations, 20k edges (p95: 8.1s rebuild, 32ms sweep, 6ms search) |
